@@ -109,11 +109,9 @@ query DeviceId {
 }
 """
 
-REFRESH_CUSTOMER_TOKEN_MUTATION = """
-mutation RefreshCustomerToken {
-  refreshCustomerAuthCookies
-}
-"""
+REFRESH_CUSTOMER_TOKEN_HASH = (
+    "ec4ea2caaa6c8fc1a7b139406f910e8b9acb44301ae753fef7b02631043b552c"
+)
 
 CURRENT_CUSTOMER_QUERY = """
 query CurrentCustomer($mode: String!) {
@@ -373,11 +371,16 @@ class DelhaizeApi:
         _LOGGER.debug("Refreshing Delhaize customer auth cookies")
         data = await self.graphql(
             "RefreshCustomerToken",
-            REFRESH_CUSTOMER_TOKEN_MUTATION,
+            extensions={
+                "persistedQuery": {
+                    "version": 1,
+                    "sha256Hash": REFRESH_CUSTOMER_TOKEN_HASH,
+                }
+            },
             extra_headers={"x-do-refresh-token": "true"},
             allow_token_refresh=False,
         )
-        return bool(data.get("refreshCustomerAuthCookies"))
+        return "refreshCustomerAuthCookies" in data
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -489,9 +492,10 @@ class DelhaizeApi:
     async def graphql(
         self,
         operation_name: str,
-        query: str,
+        query: str | None = None,
         *,
         variables: dict[str, Any] | None = None,
+        extensions: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         allow_token_refresh: bool = True,
     ) -> dict[str, Any]:
@@ -501,6 +505,7 @@ class DelhaizeApi:
                 operation_name,
                 query,
                 variables=variables,
+                extensions=extensions,
                 extra_headers=extra_headers,
             )
         except DelhaizeTokenRefreshRequired:
@@ -516,28 +521,35 @@ class DelhaizeApi:
                 operation_name,
                 query,
                 variables=variables,
+                extensions=extensions,
                 extra_headers=extra_headers,
             )
 
     async def _graphql(
         self,
         operation_name: str,
-        query: str,
+        query: str | None = None,
         *,
         variables: dict[str, Any] | None = None,
+        extensions: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Execute one GraphQL HTTP request."""
-        payload = {
+        payload: dict[str, Any] = {
             "operationName": operation_name,
             "variables": variables or {},
-            "query": query,
         }
+        if query is not None:
+            payload["query"] = query
+        if extensions is not None:
+            payload["extensions"] = extensions
         headers = self._headers(operation_name, extra_headers=extra_headers)
         _LOGGER.debug(
-            "Sending Delhaize GraphQL request: operation=%s variables=%s cookie_present=%s extra_headers=%s",
+            "Sending Delhaize GraphQL request: operation=%s variables=%s query_present=%s extensions_present=%s cookie_present=%s extra_headers=%s",
             operation_name,
             sorted(payload["variables"].keys()),
+            "query" in payload,
+            "extensions" in payload,
             "Cookie" in headers,
             sorted((extra_headers or {}).keys()),
         )

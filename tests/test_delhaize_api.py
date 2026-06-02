@@ -42,6 +42,7 @@ def _load_delhaize_api() -> types.ModuleType:
 delhaize_api = _load_delhaize_api()
 DelhaizeApi = delhaize_api.DelhaizeApi
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
+REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
 
 
 def test_validate_session_refreshes_pending_token_and_retries() -> None:
@@ -61,7 +62,7 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                     }
                 ),
                 FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": True}},
+                    {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"session": "new-session"},
                 ),
                 FakeResponse(
@@ -86,7 +87,7 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
-        assert session.requests[1]["headers"]["x-do-refresh-token"] == "true"
+        assert_refresh_customer_token_request(session.requests[1])
         assert "session=new-session" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -100,7 +101,7 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": True}},
+                    {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"session": "new-session"},
                 ),
                 FakeResponse(
@@ -124,7 +125,7 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert session.requests[1]["headers"]["x-do-refresh-token"] == "true"
+        assert_refresh_customer_token_request(session.requests[1])
         assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
         assert "session=new-session" in api.get_cookie_header()
 
@@ -139,7 +140,7 @@ def test_graphql_refreshes_invalid_access_token_and_retries_operation() -> None:
             [
                 FakeResponse({"errors": [{"message": "Invalid access token"}]}),
                 FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": True}},
+                    {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"session": "new-session"},
                 ),
                 FakeResponse(
@@ -163,7 +164,7 @@ def test_graphql_refreshes_invalid_access_token_and_retries_operation() -> None:
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert session.requests[1]["headers"]["x-do-refresh-token"] == "true"
+        assert_refresh_customer_token_request(session.requests[1])
         assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
         assert "session=new-session" in api.get_cookie_header()
 
@@ -245,11 +246,27 @@ class FakeSession:
             {
                 "url": url,
                 "operation": json["operationName"],
+                "payload": json,
                 "headers": headers,
                 "timeout": timeout,
             }
         )
         return FakeRequest(self._responses.pop(0))
+
+
+def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
+    """Assert the refresh request matches Delhaize's persisted-query browser call."""
+    assert request["headers"]["x-do-refresh-token"] == "true"
+    assert request["payload"] == {
+        "operationName": "RefreshCustomerToken",
+        "variables": {},
+        "extensions": {
+            "persistedQuery": {
+                "version": 1,
+                "sha256Hash": REFRESH_CUSTOMER_TOKEN_HASH,
+            }
+        },
+    }
 
 
 class FakeRequest:

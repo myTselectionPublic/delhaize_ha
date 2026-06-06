@@ -113,6 +113,10 @@ REFRESH_CUSTOMER_TOKEN_HASH = (
     "ec4ea2caaa6c8fc1a7b139406f910e8b9acb44301ae753fef7b02631043b552c"
 )
 
+REFRESH_CUSTOMER_TOKEN_MUTATION = (
+    "mutation RefreshCustomerToken{refreshCustomerAuthCookies}"
+)
+
 CURRENT_CUSTOMER_QUERY = """
 query CurrentCustomer($mode: String!) {
   currentCustomer(mode: $mode) {
@@ -368,19 +372,44 @@ class DelhaizeApi:
 
     async def refresh_customer_auth_cookies(self) -> bool:
         """Refresh Delhaize customer auth cookies when a refresh cookie is present."""
-        _LOGGER.debug("Refreshing Delhaize customer auth cookies")
-        data = await self.graphql(
-            "RefreshCustomerToken",
-            extensions={
-                "persistedQuery": {
-                    "version": 1,
-                    "sha256Hash": REFRESH_CUSTOMER_TOKEN_HASH,
-                }
-            },
-            extra_headers={"x-do-refresh-token": "true"},
-            allow_token_refresh=False,
+        before_cookies = dict(self._cookies)
+        before_cookie_names = sorted(before_cookies)
+        _LOGGER.debug(
+            "Refreshing Delhaize customer auth cookies: cookie_names_before=%s",
+            before_cookie_names,
         )
-        return "refreshCustomerAuthCookies" in data
+        try:
+            data = await self.graphql(
+                "RefreshCustomerToken",
+                REFRESH_CUSTOMER_TOKEN_MUTATION,
+                extra_headers={
+                    "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
+                    "x-do-refresh-token": "true",
+                },
+                allow_token_refresh=False,
+            )
+        except DelhaizeApiError as err:
+            _LOGGER.warning(
+                "Delhaize customer auth cookie refresh failed: error=%s errors=%s cookie_names_before=%s cookie_names_after=%s",
+                err,
+                summarize_graphql_errors(err.errors),
+                before_cookie_names,
+                self._cookie_names(),
+            )
+            raise
+
+        refreshed = "refreshCustomerAuthCookies" in data
+        _LOGGER.debug(
+            "Delhaize customer auth cookie refresh response: refreshed=%s cookie_changes=%s cookie_names_after=%s",
+            refreshed,
+            _cookie_change_summary(before_cookies, self._cookies),
+            self._cookie_names(),
+        )
+        if not refreshed:
+            raise DelhaizeAuthError(
+                "Delhaize refresh response did not include refreshCustomerAuthCookies"
+            )
+        return refreshed
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -399,12 +428,26 @@ class DelhaizeApi:
         try:
             _LOGGER.debug("Validating Delhaize session")
             return await self.current_customer()
-        except DelhaizeAuthError:
+        except DelhaizeAuthError as err:
             if not self.get_cookie_header():
                 raise
-            _LOGGER.debug("Delhaize session validation failed; trying cookie refresh")
-            await self.refresh_customer_auth_cookies()
-            return await self.current_customer()
+            _LOGGER.debug(
+                "Delhaize session validation failed; trying cookie refresh: error=%s errors=%s cookie_names=%s",
+                err,
+                summarize_graphql_errors(err.errors),
+                self._cookie_names(),
+            )
+            try:
+                await self.refresh_customer_auth_cookies()
+                return await self.current_customer()
+            except DelhaizeAuthError as refresh_err:
+                _LOGGER.warning(
+                    "Delhaize session validation still failed after cookie refresh: error=%s errors=%s cookie_names=%s",
+                    refresh_err,
+                    summarize_graphql_errors(refresh_err.errors),
+                    self._cookie_names(),
+                )
+                raise
 
     async def get_loyalty_details(self, *, lang: str | None = None) -> dict[str, Any]:
         """Return loyalty points, savings, and Nutri-Boost details."""
@@ -513,17 +556,28 @@ class DelhaizeApi:
                 raise
 
             _LOGGER.debug(
-                "Delhaize access token expired for %s; refreshing cookies and retrying once",
+                "Delhaize access token expired for %s; refreshing cookies and retrying once: cookie_names=%s",
                 operation_name,
+                self._cookie_names(),
             )
-            await self.refresh_customer_auth_cookies()
-            return await self._graphql(
-                operation_name,
-                query,
-                variables=variables,
-                extensions=extensions,
-                extra_headers=extra_headers,
-            )
+            try:
+                await self.refresh_customer_auth_cookies()
+                return await self._graphql(
+                    operation_name,
+                    query,
+                    variables=variables,
+                    extensions=extensions,
+                    extra_headers=extra_headers,
+                )
+            except DelhaizeApiError as err:
+                _LOGGER.warning(
+                    "Delhaize GraphQL retry after token refresh failed: operation=%s error=%s errors=%s cookie_names=%s",
+                    operation_name,
+                    err,
+                    summarize_graphql_errors(err.errors),
+                    self._cookie_names(),
+                )
+                raise
 
     async def _graphql(
         self,
@@ -612,6 +666,7 @@ class DelhaizeApi:
                 "Chrome/124.0 Safari/537.36"
             ),
             "X-Apollo-Operation-Name": operation_name,
+            "x-default-gql-refresh-token-disabled": "true",
         }
         cookie_header = self.get_cookie_header()
         if cookie_header:
@@ -627,6 +682,10 @@ class DelhaizeApi:
                 self._cookies[key] = morsel.value
             else:
                 self._cookies.pop(key, None)
+
+    def _cookie_names(self) -> list[str]:
+        """Return stored cookie names for sanitized diagnostics."""
+        return sorted(self._cookies)
 
     def _decode_response(self, response_text: str, operation_name: str) -> dict[str, Any]:
         """Decode a JSON GraphQL response."""
@@ -756,6 +815,22 @@ def _is_token_expired_error(text: str) -> bool:
         or "access token expired" in text
         or "invalid access token" in text
     )
+
+
+def _cookie_change_summary(
+    before: dict[str, str],
+    after: dict[str, str],
+) -> dict[str, list[str]]:
+    """Return changed cookie names for logs without exposing values."""
+    before_set = set(before)
+    after_set = set(after)
+    return {
+        "added": sorted(after_set - before_set),
+        "changed": sorted(
+            key for key in before_set & after_set if before[key] != after[key]
+        ),
+        "removed": sorted(before_set - after_set),
+    }
 
 
 def summarize_graphql_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

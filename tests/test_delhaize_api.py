@@ -43,6 +43,7 @@ delhaize_api = _load_delhaize_api()
 DelhaizeApi = delhaize_api.DelhaizeApi
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
+REFRESH_CUSTOMER_TOKEN_MUTATION = delhaize_api.REFRESH_CUSTOMER_TOKEN_MUTATION
 
 
 def test_validate_session_refreshes_pending_token_and_retries() -> None:
@@ -255,17 +256,14 @@ class FakeSession:
 
 
 def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
-    """Assert the refresh request matches Delhaize's persisted-query browser call."""
+    """Assert the refresh request matches Delhaize's browser call."""
     assert request["headers"]["x-do-refresh-token"] == "true"
+    assert request["headers"]["X-APOLLO-OPERATION-ID"] == REFRESH_CUSTOMER_TOKEN_HASH
+    assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
     assert request["payload"] == {
         "operationName": "RefreshCustomerToken",
         "variables": {},
-        "extensions": {
-            "persistedQuery": {
-                "version": 1,
-                "sha256Hash": REFRESH_CUSTOMER_TOKEN_HASH,
-            }
-        },
+        "query": REFRESH_CUSTOMER_TOKEN_MUTATION,
     }
 
 

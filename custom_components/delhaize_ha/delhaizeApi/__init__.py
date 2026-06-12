@@ -717,15 +717,15 @@ class DelhaizeApi:
         ):
             raise DelhaizeTokenRefreshRequired(combined, errors=errors)
 
+        if _is_token_expired_error(text):
+            raise DelhaizeTokenRefreshRequired(combined, errors=errors)
+
         if (
             _has_error_code(errors, "UNAUTHENTICATED")
             or _has_error_code(errors, "AGENT_UNAUTHENTICATED")
             or _has_error_code(errors, "FORBIDDEN")
         ):
             raise DelhaizeAuthError(combined, errors=errors)
-
-        if _is_token_expired_error(text):
-            raise DelhaizeTokenRefreshRequired(combined, errors=errors)
 
         if (
             "forbidden" in text

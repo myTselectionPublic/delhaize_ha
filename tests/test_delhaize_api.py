@@ -173,8 +173,8 @@ def test_graphql_refreshes_invalid_access_token_and_retries_operation() -> None:
     asyncio.run(run_test())
 
 
-def test_validate_session_does_not_refresh_unauthenticated_invalid_access_token() -> None:
-    """Delhaize reports auth-lost invalid tokens as UNAUTHENTICATED."""
+def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> None:
+    """Delhaize reports 12-hour token expiry as UNAUTHENTICATED invalid token."""
 
     async def run_test() -> None:
         session = FakeSession(
@@ -184,6 +184,7 @@ def test_validate_session_does_not_refresh_unauthenticated_invalid_access_token(
                         "errors": [
                             {
                                 "message": "Invalid access token",
+                                "path": ["currentCustomer"],
                                 "extensions": {
                                     "code": "UNAUTHENTICATED",
                                     "response": {
@@ -194,28 +195,36 @@ def test_validate_session_does_not_refresh_unauthenticated_invalid_access_token(
                         ]
                     }
                 ),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"session": "new-session"},
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "currentCustomer": {
+                                "uid": "customer-1",
+                                "firstName": "Del",
+                            }
+                        }
+                    }
+                ),
             ]
         )
         api = DelhaizeApi(session, cookie_header="session=old-session")
 
-        try:
-            await api.validate_session()
-        except DelhaizeAuthError as err:
-            assert not isinstance(err, DelhaizeTokenRefreshRequired)
-            assert delhaize_api.summarize_graphql_errors(err.errors) == [
-                {
-                    "message": "Invalid access token",
-                    "code": "UNAUTHENTICATED",
-                    "reasonCode": "UNAUTHENTICATED",
-                    "extension_keys": ["code", "response"],
-                }
-            ]
-        else:
-            raise AssertionError("Expected auth failure to be raised")
+        customer = await api.validate_session()
+
+        assert customer["uid"] == "customer-1"
 
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
+            "RefreshCustomerToken",
+            "CurrentCustomer",
         ]
+        assert_refresh_customer_token_request(session.requests[1])
+        assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
+        assert "session=new-session" in api.get_cookie_header()
 
     asyncio.run(run_test())
 

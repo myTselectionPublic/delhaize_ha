@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from http.cookies import SimpleCookie
 import importlib.util
 import json as json_module
@@ -225,6 +226,49 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
         assert_refresh_customer_token_request(session.requests[1])
         assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
         assert "session=new-session" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
+def test_refresh_customer_auth_cookies_if_due_refreshes_then_backs_off() -> None:
+    """Proactive refresh should run once per interval."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"session": "new-session"},
+                ),
+            ]
+        )
+        api = DelhaizeApi(session, cookie_header="session=old-session")
+
+        assert await api.refresh_customer_auth_cookies_if_due(
+            interval=timedelta(hours=6)
+        )
+        assert not await api.refresh_customer_auth_cookies_if_due(
+            interval=timedelta(hours=6)
+        )
+
+        assert [request["operation"] for request in session.requests] == [
+            "RefreshCustomerToken",
+        ]
+        assert_refresh_customer_token_request(session.requests[0])
+        assert "session=new-session" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
+def test_refresh_customer_auth_cookies_if_due_skips_without_cookie() -> None:
+    """Proactive refresh needs an existing browser session cookie."""
+
+    async def run_test() -> None:
+        session = FakeSession([])
+        api = DelhaizeApi(session)
+
+        assert not await api.refresh_customer_auth_cookies_if_due()
+        assert session.requests == []
 
     asyncio.run(run_test())
 

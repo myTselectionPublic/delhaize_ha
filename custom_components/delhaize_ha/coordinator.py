@@ -88,24 +88,9 @@ class DelhaizeDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch the account summary from the API."""
         self._load_cookie_from_entry()
         self.api.language = self.config_entry.data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
-        await self._refresh_auth_cookies_if_due()
         return await self.api.fetch_summary(
             auto_activate=self.config_entry.data.get(CONF_AUTO_ACTIVATE_OFFERS, False)
         )
-
-    async def _refresh_auth_cookies_if_due(self) -> None:
-        """Refresh auth cookies before Delhaize's access token reaches hard expiry."""
-        try:
-            refreshed = await self.api.refresh_customer_auth_cookies_if_due()
-        except DelhaizeApiError as exc:
-            _LOGGER.debug(
-                "Proactive Delhaize auth cookie refresh failed; continuing with existing cookies: %s",
-                exc,
-            )
-            return
-
-        if refreshed:
-            self._persist_cookie_if_changed()
 
     async def _login_with_stored_credentials(self) -> None:
         """Create a fresh session from stored credentials."""

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 from http.cookies import SimpleCookie
 import importlib.util
 import json as json_module
@@ -166,8 +165,8 @@ def test_graphql_treats_invalid_access_token_as_auth_lost() -> None:
     asyncio.run(run_test())
 
 
-def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> None:
-    """Delhaize reports 12-hour token expiry as UNAUTHENTICATED invalid token."""
+def test_validate_session_treats_unauthenticated_invalid_access_token_as_auth_lost() -> None:
+    """Delhaize's browser treats UNAUTHENTICATED invalid-token errors as auth lost."""
 
     async def run_test() -> None:
         session = FakeSession(
@@ -188,79 +187,20 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
                         ]
                     }
                 ),
-                FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": None}},
-                    cookies={"session": "new-session"},
-                ),
-                FakeResponse(
-                    {
-                        "data": {
-                            "currentCustomer": {
-                                "uid": "customer-1",
-                                "firstName": "Del",
-                            }
-                        }
-                    }
-                ),
             ]
         )
-        api = DelhaizeApi(session, cookie_header="session=old-session")
+        api = DelhaizeApi(session, cookie_header="grocery-roatc=old-access-token")
 
-        customer = await api.validate_session()
-
-        assert customer["uid"] == "customer-1"
+        try:
+            await api.validate_session()
+        except DelhaizeAuthError:
+            pass
+        else:
+            raise AssertionError("Expected invalid access token to require reauth")
 
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
-            "RefreshCustomerToken",
-            "CurrentCustomer",
         ]
-        assert_refresh_customer_token_request(session.requests[1])
-        assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
-        assert "session=new-session" in api.get_cookie_header()
-
-    asyncio.run(run_test())
-
-
-def test_refresh_customer_auth_cookies_if_due_refreshes_then_backs_off() -> None:
-    """Proactive refresh should run once per interval."""
-
-    async def run_test() -> None:
-        session = FakeSession(
-            [
-                FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": None}},
-                    cookies={"session": "new-session"},
-                ),
-            ]
-        )
-        api = DelhaizeApi(session, cookie_header="session=old-session")
-
-        assert await api.refresh_customer_auth_cookies_if_due(
-            interval=timedelta(hours=6)
-        )
-        assert not await api.refresh_customer_auth_cookies_if_due(
-            interval=timedelta(hours=6)
-        )
-
-        assert [request["operation"] for request in session.requests] == [
-            "RefreshCustomerToken",
-        ]
-        assert_refresh_customer_token_request(session.requests[0])
-        assert "session=new-session" in api.get_cookie_header()
-
-    asyncio.run(run_test())
-
-
-def test_refresh_customer_auth_cookies_if_due_skips_without_cookie() -> None:
-    """Proactive refresh needs an existing browser session cookie."""
-
-    async def run_test() -> None:
-        session = FakeSession([])
-        api = DelhaizeApi(session)
-
-        assert not await api.refresh_customer_auth_cookies_if_due()
-        assert session.requests == []
 
     asyncio.run(run_test())
 

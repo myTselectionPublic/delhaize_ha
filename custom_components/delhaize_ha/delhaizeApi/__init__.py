@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from asyncio import CancelledError, TimeoutError
-from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 import json
 import logging
@@ -17,7 +16,6 @@ from ..const import API_URL, BASE_URL, DEFAULT_LANGUAGE
 _LOGGER = logging.getLogger(__name__)
 
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
-CUSTOMER_AUTH_COOKIE_REFRESH_INTERVAL = timedelta(hours=6)
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -255,7 +253,6 @@ class DelhaizeApi:
         self.websession = websession
         self.language = language
         self._cookies: dict[str, str] = {}
-        self._last_customer_auth_refresh_attempt: datetime | None = None
         if cookie_header:
             self.set_cookie_header(cookie_header)
 
@@ -287,25 +284,6 @@ class DelhaizeApi:
     def get_cookie_header(self) -> str:
         """Return the current Cookie header value."""
         return "; ".join(f"{key}={value}" for key, value in sorted(self._cookies.items()))
-
-    async def refresh_customer_auth_cookies_if_due(
-        self,
-        *,
-        interval: timedelta = CUSTOMER_AUTH_COOKIE_REFRESH_INTERVAL,
-    ) -> bool:
-        """Refresh customer auth cookies periodically before the access token expires."""
-        if not self.get_cookie_header():
-            return False
-
-        now = datetime.now(timezone.utc)
-        if (
-            self._last_customer_auth_refresh_attempt is not None
-            and now - self._last_customer_auth_refresh_attempt < interval
-        ):
-            return False
-
-        await self.refresh_customer_auth_cookies()
-        return True
 
     async def get_device_id(self) -> str | None:
         """Initialize Delhaize device cookies and return the device id."""
@@ -402,7 +380,6 @@ class DelhaizeApi:
         """Refresh Delhaize customer auth cookies when a refresh cookie is present."""
         before_cookies = dict(self._cookies)
         before_cookie_names = sorted(before_cookies)
-        self._last_customer_auth_refresh_attempt = datetime.now(timezone.utc)
         before_auth_cookies = _customer_auth_cookies(before_cookies)
         _LOGGER.debug(
             "Refreshing Delhaize customer auth cookies: cookie_names_before=%s",

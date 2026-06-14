@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from asyncio import CancelledError, TimeoutError
+from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 import json
 import logging
@@ -16,6 +17,7 @@ from ..const import API_URL, BASE_URL, DEFAULT_LANGUAGE
 _LOGGER = logging.getLogger(__name__)
 
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
+CUSTOMER_AUTH_COOKIE_REFRESH_INTERVAL = timedelta(hours=6)
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -253,6 +255,7 @@ class DelhaizeApi:
         self.websession = websession
         self.language = language
         self._cookies: dict[str, str] = {}
+        self._last_customer_auth_refresh_attempt: datetime | None = None
         if cookie_header:
             self.set_cookie_header(cookie_header)
 
@@ -284,6 +287,25 @@ class DelhaizeApi:
     def get_cookie_header(self) -> str:
         """Return the current Cookie header value."""
         return "; ".join(f"{key}={value}" for key, value in sorted(self._cookies.items()))
+
+    async def refresh_customer_auth_cookies_if_due(
+        self,
+        *,
+        interval: timedelta = CUSTOMER_AUTH_COOKIE_REFRESH_INTERVAL,
+    ) -> bool:
+        """Refresh customer auth cookies periodically before the access token expires."""
+        if not self.get_cookie_header():
+            return False
+
+        now = datetime.now(timezone.utc)
+        if (
+            self._last_customer_auth_refresh_attempt is not None
+            and now - self._last_customer_auth_refresh_attempt < interval
+        ):
+            return False
+
+        await self.refresh_customer_auth_cookies()
+        return True
 
     async def get_device_id(self) -> str | None:
         """Initialize Delhaize device cookies and return the device id."""
@@ -380,6 +402,7 @@ class DelhaizeApi:
         """Refresh Delhaize customer auth cookies when a refresh cookie is present."""
         before_cookies = dict(self._cookies)
         before_cookie_names = sorted(before_cookies)
+        self._last_customer_auth_refresh_attempt = datetime.now(timezone.utc)
         before_auth_cookies = _customer_auth_cookies(before_cookies)
         _LOGGER.debug(
             "Refreshing Delhaize customer auth cookies: cookie_names_before=%s",
@@ -438,30 +461,9 @@ class DelhaizeApi:
         return customer
 
     async def validate_session(self) -> dict[str, Any]:
-        """Validate the current session, trying a cookie refresh once."""
-        try:
-            _LOGGER.debug("Validating Delhaize session")
-            return await self.current_customer()
-        except DelhaizeAuthError as err:
-            if not self.get_cookie_header():
-                raise
-            _LOGGER.debug(
-                "Delhaize session validation failed; trying cookie refresh: error=%s errors=%s cookie_names=%s",
-                err,
-                summarize_graphql_errors(err.errors),
-                self._cookie_names(),
-            )
-            try:
-                await self.refresh_customer_auth_cookies()
-                return await self.current_customer()
-            except DelhaizeAuthError as refresh_err:
-                _LOGGER.warning(
-                    "Delhaize session validation still failed after cookie refresh: error=%s errors=%s cookie_names=%s",
-                    refresh_err,
-                    summarize_graphql_errors(refresh_err.errors),
-                    self._cookie_names(),
-                )
-                raise
+        """Validate the current session."""
+        _LOGGER.debug("Validating Delhaize session")
+        return await self.current_customer()
 
     async def get_loyalty_details(self, *, lang: str | None = None) -> dict[str, Any]:
         """Return loyalty points, savings, and Nutri-Boost details."""
@@ -747,11 +749,20 @@ class DelhaizeApi:
             raise DelhaizeTokenRefreshRequired(combined, errors=errors)
 
         if (
-            _is_token_expired_error(text)
-            or _has_error_code(errors, "TOKEN_EXPIRED")
+            _has_error_code(errors, "TOKEN_EXPIRED")
             or _has_error_code(errors, "ACCESS_TOKEN_EXPIRED")
         ):
             raise DelhaizeTokenRefreshRequired(combined, errors=errors)
+
+        if _is_token_expired_error(text):
+            raise DelhaizeTokenRefreshRequired(combined, errors=errors)
+
+        if (
+            _has_error_code(errors, "UNAUTHENTICATED")
+            or _has_error_code(errors, "AGENT_UNAUTHENTICATED")
+            or _has_error_code(errors, "FORBIDDEN")
+        ):
+            raise DelhaizeAuthError(combined, errors=errors)
 
         if (
             "forbidden" in text
@@ -806,21 +817,35 @@ def _error_codes(errors: list[dict[str, Any]]) -> list[str]:
     codes: list[str] = []
     for error in errors:
         extensions = error.get("extensions") or {}
-        for key in ("code", "reasonCode", "type"):
-            value = error.get(key) or extensions.get(key)
-            if value is not None:
-                codes.append(str(value))
+        response = extensions.get("response") if isinstance(extensions, dict) else None
+        response_body = response.get("body") if isinstance(response, dict) else None
+        code_sources = [error, extensions]
+        if isinstance(response_body, dict):
+            code_sources.append(response_body)
+
+        for source in code_sources:
+            for key in ("code", "reasonCode", "type"):
+                value = source.get(key)
+                if value is not None:
+                    codes.append(str(value))
     return codes
 
 
 def _has_error_code(errors: list[dict[str, Any]], code: str) -> bool:
-    """Return whether a GraphQL error has the given extension code."""
+    """Return whether a GraphQL error has the given code or reason code."""
     expected = code.upper()
-    return any(
-        str((error.get("extensions") or {}).get("code") or error.get("code")).upper()
-        == expected
-        for error in errors
-    )
+    return any(value.upper() == expected for value in _error_codes(errors))
+
+
+def _response_body_reason_code(extensions: dict[str, Any]) -> Any:
+    """Return a nested GraphQL response reason code, when present."""
+    response = extensions.get("response")
+    if not isinstance(response, dict):
+        return None
+    body = response.get("body")
+    if not isinstance(body, dict):
+        return None
+    return body.get("reasonCode") or body.get("code")
 
 
 def _is_token_expired_error(text: str) -> bool:
@@ -882,7 +907,11 @@ def summarize_graphql_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any
             "message": error.get("message"),
             "path": error.get("path"),
             "code": error.get("code") or extensions.get("code"),
-            "reasonCode": error.get("reasonCode") or extensions.get("reasonCode"),
+            "reasonCode": (
+                error.get("reasonCode")
+                or extensions.get("reasonCode")
+                or _response_body_reason_code(extensions)
+            ),
             "type": error.get("type") or extensions.get("type"),
             "extension_keys": sorted(extensions.keys()),
         }

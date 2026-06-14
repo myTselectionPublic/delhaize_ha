@@ -16,6 +16,12 @@ from ..const import API_URL, BASE_URL, DEFAULT_LANGUAGE
 _LOGGER = logging.getLogger(__name__)
 
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
+CUSTOMER_AUTH_COOKIE_NAMES = {
+    "grocery-roatc",
+    "grocery-rortc",
+    "grocery-wasc",
+    "v_cust",
+}
 
 LOGIN_MUTATION = """
 mutation Login(
@@ -374,6 +380,7 @@ class DelhaizeApi:
         """Refresh Delhaize customer auth cookies when a refresh cookie is present."""
         before_cookies = dict(self._cookies)
         before_cookie_names = sorted(before_cookies)
+        before_auth_cookies = _customer_auth_cookies(before_cookies)
         _LOGGER.debug(
             "Refreshing Delhaize customer auth cookies: cookie_names_before=%s",
             before_cookie_names,
@@ -398,16 +405,23 @@ class DelhaizeApi:
             )
             raise
 
-        refreshed = "refreshCustomerAuthCookies" in data
+        auth_cookie_changes = _cookie_change_summary(
+            before_auth_cookies,
+            _customer_auth_cookies(self._cookies),
+        )
+        refreshed = "refreshCustomerAuthCookies" in data and _has_cookie_changes(
+            auth_cookie_changes
+        )
         _LOGGER.debug(
-            "Delhaize customer auth cookie refresh response: refreshed=%s cookie_changes=%s cookie_names_after=%s",
+            "Delhaize customer auth cookie refresh response: refreshed=%s auth_cookie_changes=%s cookie_changes=%s cookie_names_after=%s",
             refreshed,
+            auth_cookie_changes,
             _cookie_change_summary(before_cookies, self._cookies),
             self._cookie_names(),
         )
         if not refreshed:
             raise DelhaizeAuthError(
-                "Delhaize refresh response did not include refreshCustomerAuthCookies"
+                "Delhaize refresh did not update customer auth cookies"
             )
         return refreshed
 
@@ -741,8 +755,10 @@ class DelhaizeApi:
 
         if (
             "forbidden" in text
+            or "unauthenticated" in text
             or "unauthorized" in text
             or "anonymous user" in text
+            or "invalid access token" in text
             or "invalid_grant" in text
             or "invalidcredentials" in text.replace("_", "")
             or operation_name.lower() in {"login", "loginwithmfa"}
@@ -813,8 +829,21 @@ def _is_token_expired_error(text: str) -> bool:
         ("token" in text and "expired" in text)
         or "jwt expired" in text
         or "access token expired" in text
-        or "invalid access token" in text
     )
+
+
+def _customer_auth_cookies(cookies: dict[str, str]) -> dict[str, str]:
+    """Return cookies that carry Delhaize customer auth state."""
+    return {
+        key: value
+        for key, value in cookies.items()
+        if key in CUSTOMER_AUTH_COOKIE_NAMES
+    }
+
+
+def _has_cookie_changes(changes: dict[str, list[str]]) -> bool:
+    """Return whether a cookie change summary has any changed entries."""
+    return any(changes.values())
 
 
 def _cookie_change_summary(

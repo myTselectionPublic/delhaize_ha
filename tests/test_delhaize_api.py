@@ -41,6 +41,7 @@ def _load_delhaize_api() -> types.ModuleType:
 
 delhaize_api = _load_delhaize_api()
 DelhaizeApi = delhaize_api.DelhaizeApi
+DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
 REFRESH_CUSTOMER_TOKEN_MUTATION = delhaize_api.REFRESH_CUSTOMER_TOKEN_MUTATION
@@ -64,7 +65,7 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                 ),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
-                    cookies={"session": "new-session"},
+                    cookies={"grocery-roatc": "new-access-token"},
                 ),
                 FakeResponse(
                     {
@@ -78,7 +79,10 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                 ),
             ]
         )
-        api = DelhaizeApi(session, cookie_header="session=old-session")
+        api = DelhaizeApi(
+            session,
+            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+        )
 
         customer = await api.validate_session()
 
@@ -89,7 +93,7 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
             "CurrentCustomer",
         ]
         assert_refresh_customer_token_request(session.requests[1])
-        assert "session=new-session" in api.get_cookie_header()
+        assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
 
@@ -103,7 +107,7 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
-                    cookies={"session": "new-session"},
+                    cookies={"grocery-roatc": "new-access-token"},
                 ),
                 FakeResponse(
                     {
@@ -116,7 +120,10 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
                 ),
             ]
         )
-        api = DelhaizeApi(session, cookie_header="session=old-session")
+        api = DelhaizeApi(
+            session,
+            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+        )
 
         details = await api.get_loyalty_details()
 
@@ -127,47 +134,33 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
             "getIbizaAccountDetails",
         ]
         assert_refresh_customer_token_request(session.requests[1])
-        assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
-        assert "session=new-session" in api.get_cookie_header()
+        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
 
 
-def test_graphql_refreshes_invalid_access_token_and_retries_operation() -> None:
-    """Delhaize can report stale auth cookies as an invalid access token."""
+def test_graphql_treats_invalid_access_token_as_auth_lost() -> None:
+    """Invalid access tokens should reauthenticate instead of refreshing again."""
 
     async def run_test() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Invalid access token"}]}),
-                FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": None}},
-                    cookies={"session": "new-session"},
-                ),
-                FakeResponse(
-                    {
-                        "data": {
-                            "loyaltyPoints": {"pointsBalance": 42},
-                            "nutriscoreBalance": {},
-                            "savings": {},
-                        }
-                    }
-                ),
             ]
         )
-        api = DelhaizeApi(session, cookie_header="session=old-session")
+        api = DelhaizeApi(session, cookie_header="grocery-roatc=old-access-token")
 
-        details = await api.get_loyalty_details()
+        try:
+            await api.get_loyalty_details()
+        except DelhaizeAuthError:
+            pass
+        else:
+            raise AssertionError("Expected invalid access token to require reauth")
 
-        assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "RefreshCustomerToken",
-            "getIbizaAccountDetails",
         ]
-        assert_refresh_customer_token_request(session.requests[1])
-        assert "session=new-session" in session.requests[2]["headers"]["Cookie"]
-        assert "session=new-session" in api.get_cookie_header()
 
     asyncio.run(run_test())
 
@@ -199,29 +192,39 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
     asyncio.run(run_test())
 
 
-def test_refresh_operation_does_not_loop_on_invalid_access_token() -> None:
-    """A failed invalid-token refresh should surface without recursive refresh."""
+def test_refresh_requires_customer_auth_cookie_change() -> None:
+    """Anti-bot cookie changes alone do not refresh the customer token."""
 
     async def run_test() -> None:
         session = FakeSession(
             [
-                FakeResponse({"errors": [{"message": "Invalid access token"}]}),
-                FakeResponse({"errors": [{"message": "Invalid access token"}]}),
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc", "bm_sv": "new-bm"},
+                ),
             ]
         )
-        api = DelhaizeApi(session, cookie_header="session=old-session")
+        api = DelhaizeApi(
+            session,
+            cookie_header=(
+                "grocery-roatc=old-access-token; grocery-rortc=refresh-token; "
+                "_abck=old-abck; ak_bmsc=old-bmsc; bm_sv=old-bm"
+            ),
+        )
 
         try:
             await api.get_loyalty_details()
-        except DelhaizeTokenRefreshRequired:
-            pass
+        except DelhaizeAuthError as err:
+            assert str(err) == "Delhaize refresh did not update customer auth cookies"
         else:
-            raise AssertionError("Expected token refresh failure to be raised")
+            raise AssertionError("Expected refresh without auth cookie changes to fail")
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "RefreshCustomerToken",
         ]
+        assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
 

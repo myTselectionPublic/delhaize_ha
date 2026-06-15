@@ -44,7 +44,7 @@ DelhaizeApi = delhaize_api.DelhaizeApi
 DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
-REFRESH_CUSTOMER_TOKEN_MUTATION = delhaize_api.REFRESH_CUSTOMER_TOKEN_MUTATION
+REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIONS
 
 
 def test_validate_session_refreshes_pending_token_and_retries() -> None:
@@ -306,7 +306,7 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     assert request["payload"] == {
         "operationName": "RefreshCustomerToken",
         "variables": {},
-        "query": REFRESH_CUSTOMER_TOKEN_MUTATION,
+        "extensions": REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
     }
 
 

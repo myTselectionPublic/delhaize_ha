@@ -119,9 +119,12 @@ REFRESH_CUSTOMER_TOKEN_HASH = (
     "ec4ea2caaa6c8fc1a7b139406f910e8b9acb44301ae753fef7b02631043b552c"
 )
 
-REFRESH_CUSTOMER_TOKEN_MUTATION = (
-    "mutation RefreshCustomerToken{refreshCustomerAuthCookies}"
-)
+REFRESH_CUSTOMER_TOKEN_EXTENSIONS = {
+    "persistedQuery": {
+        "version": 1,
+        "sha256Hash": REFRESH_CUSTOMER_TOKEN_HASH,
+    }
+}
 
 CURRENT_CUSTOMER_QUERY = """
 query CurrentCustomer($mode: String!) {
@@ -388,7 +391,7 @@ class DelhaizeApi:
         try:
             data = await self.graphql(
                 "RefreshCustomerToken",
-                REFRESH_CUSTOMER_TOKEN_MUTATION,
+                extensions=REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
                 extra_headers={
                     "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
                     "x-do-refresh-token": "true",

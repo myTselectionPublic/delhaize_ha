@@ -412,9 +412,7 @@ class DelhaizeApi:
             before_auth_cookies,
             _customer_auth_cookies(self._cookies),
         )
-        refreshed = "refreshCustomerAuthCookies" in data and _has_cookie_changes(
-            auth_cookie_changes
-        )
+        refreshed = "refreshCustomerAuthCookies" in data
         _LOGGER.debug(
             "Delhaize customer auth cookie refresh response: refreshed=%s auth_cookie_changes=%s cookie_changes=%s cookie_names_after=%s",
             refreshed,
@@ -424,7 +422,7 @@ class DelhaizeApi:
         )
         if not refreshed:
             raise DelhaizeAuthError(
-                "Delhaize refresh did not update customer auth cookies"
+                "Delhaize refresh response did not include customer auth refresh data"
             )
         return refreshed
 
@@ -844,11 +842,6 @@ def _customer_auth_cookies(cookies: dict[str, str]) -> dict[str, str]:
         for key, value in cookies.items()
         if key in CUSTOMER_AUTH_COOKIE_NAMES
     }
-
-
-def _has_cookie_changes(changes: dict[str, list[str]]) -> bool:
-    """Return whether a cookie change summary has any changed entries."""
-    return any(changes.values())
 
 
 def _cookie_change_summary(

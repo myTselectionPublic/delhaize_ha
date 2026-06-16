@@ -232,8 +232,8 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
     asyncio.run(run_test())
 
 
-def test_refresh_requires_customer_auth_cookie_change() -> None:
-    """Anti-bot cookie changes alone do not refresh the customer token."""
+def test_refresh_retries_when_only_anti_bot_cookies_change() -> None:
+    """Delhaize may accept a refresh without visibly rotating customer auth cookies."""
 
     async def run_test() -> None:
         session = FakeSession(
@@ -242,6 +242,15 @@ def test_refresh_requires_customer_auth_cookie_change() -> None:
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc", "bm_sv": "new-bm"},
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
                 ),
             ]
         )
@@ -253,18 +262,49 @@ def test_refresh_requires_customer_auth_cookie_change() -> None:
             ),
         )
 
+        details = await api.get_loyalty_details()
+
+        assert details["loyaltyPoints"]["pointsBalance"] == 42
+        assert [request["operation"] for request in session.requests] == [
+            "getIbizaAccountDetails",
+            "RefreshCustomerToken",
+            "getIbizaAccountDetails",
+        ]
+        assert "_abck=new-abck" in session.requests[2]["headers"]["Cookie"]
+        assert "_abck=new-abck" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
+def test_refresh_requires_customer_auth_refresh_field() -> None:
+    """An unrelated successful GraphQL response should not count as a token refresh."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"data": {}}, cookies={"_abck": "new-abck"}),
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+        )
+
         try:
             await api.get_loyalty_details()
         except DelhaizeAuthError as err:
-            assert str(err) == "Delhaize refresh did not update customer auth cookies"
+            assert (
+                str(err)
+                == "Delhaize refresh response did not include customer auth refresh data"
+            )
         else:
-            raise AssertionError("Expected refresh without auth cookie changes to fail")
+            raise AssertionError("Expected refresh without refresh data to fail")
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "RefreshCustomerToken",
         ]
-        assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
 

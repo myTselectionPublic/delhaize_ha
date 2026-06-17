@@ -16,6 +16,7 @@ from ..const import API_URL, BASE_URL, DEFAULT_LANGUAGE
 _LOGGER = logging.getLogger(__name__)
 
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
+DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -123,6 +124,17 @@ REFRESH_CUSTOMER_TOKEN_EXTENSIONS = {
     "persistedQuery": {
         "version": 1,
         "sha256Hash": REFRESH_CUSTOMER_TOKEN_HASH,
+    }
+}
+
+GET_SUBSCRIPTIONS_HASH = (
+    "4954d47094692ad47185f0c577fdf30b55f8f0f34c3ede1dbb542a41314dde31"
+)
+
+GET_SUBSCRIPTIONS_EXTENSIONS = {
+    "persistedQuery": {
+        "version": 1,
+        "sha256Hash": GET_SUBSCRIPTIONS_HASH,
     }
 }
 
@@ -292,7 +304,10 @@ class DelhaizeApi:
         """Initialize Delhaize device cookies and return the device id."""
         _LOGGER.debug("Initializing Delhaize device session")
         data = await self.graphql("DeviceId", DEVICE_ID_QUERY)
-        return data.get("deviceId")
+        device_id = data.get("deviceId")
+        if device_id and DEVICE_SESSION_COOKIE_NAME not in self._cookies:
+            self._cookies[DEVICE_SESSION_COOKIE_NAME] = str(device_id)
+        return device_id
 
     async def login(
         self,
@@ -381,11 +396,13 @@ class DelhaizeApi:
 
     async def refresh_customer_auth_cookies(self) -> bool:
         """Refresh Delhaize customer auth cookies when a refresh cookie is present."""
+        await self._prepare_customer_refresh_context()
         before_cookies = dict(self._cookies)
         before_cookie_names = sorted(before_cookies)
         before_auth_cookies = _customer_auth_cookies(before_cookies)
         _LOGGER.debug(
-            "Refreshing Delhaize customer auth cookies: cookie_names_before=%s",
+            "Refreshing Delhaize customer auth cookies: device_session_present=%s cookie_names_before=%s",
+            DEVICE_SESSION_COOKIE_NAME in self._cookies,
             before_cookie_names,
         )
         try:
@@ -425,6 +442,38 @@ class DelhaizeApi:
                 "Delhaize refresh response did not include customer auth refresh data"
             )
         return refreshed
+
+    async def _prepare_customer_refresh_context(self) -> None:
+        """Mimic the browser calls that establish customer refresh context."""
+        if (
+            DEVICE_SESSION_COOKIE_NAME not in self._cookies
+            and "grocery-rortc" in self._cookies
+        ):
+            try:
+                await self.get_device_id()
+            except DelhaizeApiError as err:
+                _LOGGER.debug(
+                    "Could not initialize Delhaize device session before refresh: error=%s errors=%s cookie_names=%s",
+                    err,
+                    summarize_graphql_errors(err.errors),
+                    self._cookie_names(),
+                )
+
+        try:
+            await self.graphql(
+                "getSubscriptions",
+                variables={"customerId": "current", "lang": self.language},
+                extensions=GET_SUBSCRIPTIONS_EXTENSIONS,
+                allow_token_refresh=False,
+                method="GET",
+            )
+        except DelhaizeApiError as err:
+            _LOGGER.debug(
+                "Delhaize subscription bootstrap before refresh did not return data: error=%s errors=%s cookie_names=%s",
+                err,
+                summarize_graphql_errors(err.errors),
+                self._cookie_names(),
+            )
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -535,6 +584,7 @@ class DelhaizeApi:
         extensions: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         allow_token_refresh: bool = True,
+        method: str = "POST",
     ) -> dict[str, Any]:
         """Execute a GraphQL operation."""
         try:
@@ -544,6 +594,7 @@ class DelhaizeApi:
                 variables=variables,
                 extensions=extensions,
                 extra_headers=extra_headers,
+                method=method,
             )
         except DelhaizeTokenRefreshRequired:
             if not allow_token_refresh or not self.get_cookie_header():
@@ -562,6 +613,7 @@ class DelhaizeApi:
                     variables=variables,
                     extensions=extensions,
                     extra_headers=extra_headers,
+                    method=method,
                 )
             except DelhaizeApiError as err:
                 _LOGGER.warning(
@@ -581,8 +633,10 @@ class DelhaizeApi:
         variables: dict[str, Any] | None = None,
         extensions: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
+        method: str = "POST",
     ) -> dict[str, Any]:
         """Execute one GraphQL HTTP request."""
+        method = method.upper()
         payload: dict[str, Any] = {
             "operationName": operation_name,
             "variables": variables or {},
@@ -591,10 +645,15 @@ class DelhaizeApi:
             payload["query"] = query
         if extensions is not None:
             payload["extensions"] = extensions
-        headers = self._headers(operation_name, extra_headers=extra_headers)
-        _LOGGER.debug(
-            "Sending Delhaize GraphQL request: operation=%s variables=%s query_present=%s extensions_present=%s cookie_present=%s extra_headers=%s",
+        headers = self._headers(
             operation_name,
+            extra_headers=extra_headers,
+            include_content_type=method != "GET",
+        )
+        _LOGGER.debug(
+            "Sending Delhaize GraphQL request: operation=%s method=%s variables=%s query_present=%s extensions_present=%s cookie_present=%s extra_headers=%s",
+            operation_name,
+            method,
             sorted(payload["variables"].keys()),
             "query" in payload,
             "extensions" in payload,
@@ -603,12 +662,22 @@ class DelhaizeApi:
         )
 
         try:
-            async with self.websession.post(
-                API_URL,
-                json=payload,
-                headers=headers,
-                timeout=30,
-            ) as response:
+            if method == "GET":
+                request = self.websession.get(
+                    API_URL,
+                    params=_graphql_get_params(payload),
+                    headers=headers,
+                    timeout=30,
+                )
+            else:
+                request = self.websession.post(
+                    API_URL,
+                    json=payload,
+                    headers=headers,
+                    timeout=30,
+                )
+
+            async with request as response:
                 response_text = await response.text()
                 self._store_response_cookies(response)
                 status = response.status
@@ -647,11 +716,11 @@ class DelhaizeApi:
         operation_name: str,
         *,
         extra_headers: dict[str, str] | None = None,
+        include_content_type: bool = True,
     ) -> dict[str, str]:
         """Build request headers matching the Delhaize web client."""
         headers = {
             "Accept": "*/*",
-            "Content-Type": "application/json",
             "Origin": BASE_URL,
             "Referer": f"{BASE_URL}/{self.language}/login",
             "User-Agent": (
@@ -662,6 +731,8 @@ class DelhaizeApi:
             "X-Apollo-Operation-Name": operation_name,
             "x-default-gql-refresh-token-disabled": "true",
         }
+        if include_content_type:
+            headers["Content-Type"] = "application/json"
         cookie_header = self.get_cookie_header()
         if cookie_header:
             headers["Cookie"] = cookie_header
@@ -858,6 +929,18 @@ def _cookie_change_summary(
         ),
         "removed": sorted(before_set - after_set),
     }
+
+
+def _graphql_get_params(payload: dict[str, Any]) -> dict[str, str]:
+    """Return GraphQL GET parameters matching Apollo persisted query requests."""
+    params = {"operationName": str(payload["operationName"])}
+    for key in ("variables", "extensions"):
+        value = payload.get(key)
+        if value is not None:
+            params[key] = json.dumps(value, separators=(",", ":"))
+    if "query" in payload:
+        params["query"] = str(payload["query"])
+    return params
 
 
 def summarize_graphql_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -12,8 +12,30 @@ import types
 from typing import Any
 
 
+class FakeClientError(Exception):
+    """Stand-in for aiohttp.client_exceptions.ClientError in standalone tests."""
+
+
+def _install_aiohttp_stub() -> None:
+    """Install a tiny aiohttp stub when the dependency is unavailable."""
+    if importlib.util.find_spec("aiohttp") is not None:
+        return
+
+    aiohttp = types.ModuleType("aiohttp")
+    aiohttp.ClientResponse = object
+    aiohttp.ClientSession = object
+
+    client_exceptions = types.ModuleType("aiohttp.client_exceptions")
+    client_exceptions.ClientError = FakeClientError
+
+    sys.modules["aiohttp"] = aiohttp
+    sys.modules["aiohttp.client_exceptions"] = client_exceptions
+
+
 def _load_delhaize_api() -> types.ModuleType:
     """Load the API module without importing the Home Assistant integration package."""
+    _install_aiohttp_stub()
+
     root = Path(__file__).resolve().parents[1]
     custom_components_path = root / "custom_components"
     integration_path = custom_components_path / "delhaize_ha"
@@ -45,6 +67,7 @@ DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
 REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIONS
+GET_SUBSCRIPTIONS_EXTENSIONS = delhaize_api.GET_SUBSCRIPTIONS_EXTENSIONS
 
 
 def test_validate_session_refreshes_pending_token_and_retries() -> None:
@@ -63,6 +86,7 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                         ]
                     }
                 ),
+                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -81,7 +105,10 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
         )
         api = DelhaizeApi(
             session,
-            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token"
+            ),
         )
 
         customer = await api.validate_session()
@@ -89,10 +116,12 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
         assert customer["uid"] == "customer-1"
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
+            "getSubscriptions",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
-        assert_refresh_customer_token_request(session.requests[1])
+        assert_get_subscriptions_request(session.requests[1])
+        assert_refresh_customer_token_request(session.requests[2])
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -105,6 +134,7 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -122,7 +152,10 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         )
         api = DelhaizeApi(
             session,
-            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token"
+            ),
         )
 
         details = await api.get_loyalty_details()
@@ -130,11 +163,13 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
+            "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_refresh_customer_token_request(session.requests[1])
-        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
+        assert_get_subscriptions_request(session.requests[1])
+        assert_refresh_customer_token_request(session.requests[2])
+        assert "grocery-roatc=new-access-token" in session.requests[3]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -213,6 +248,7 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
             ]
         )
         api = DelhaizeApi(session, cookie_header="session=old-session")
@@ -226,6 +262,7 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
+            "getSubscriptions",
             "RefreshCustomerToken",
         ]
 
@@ -239,6 +276,7 @@ def test_refresh_retries_when_only_anti_bot_cookies_change() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc", "bm_sv": "new-bm"},
@@ -257,8 +295,9 @@ def test_refresh_retries_when_only_anti_bot_cookies_change() -> None:
         api = DelhaizeApi(
             session,
             cookie_header=(
-                "grocery-roatc=old-access-token; grocery-rortc=refresh-token; "
-                "_abck=old-abck; ak_bmsc=old-bmsc; bm_sv=old-bm"
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token; _abck=old-abck; ak_bmsc=old-bmsc; "
+                "bm_sv=old-bm"
             ),
         )
 
@@ -267,11 +306,59 @@ def test_refresh_retries_when_only_anti_bot_cookies_change() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
+            "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert "_abck=new-abck" in session.requests[2]["headers"]["Cookie"]
+        assert_get_subscriptions_request(session.requests[1])
+        assert "_abck=new-abck" in session.requests[3]["headers"]["Cookie"]
         assert "_abck=new-abck" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
+def test_refresh_initializes_missing_device_session_from_device_id() -> None:
+    """The deviceId query is stored as deviceSessionId before token refresh."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"data": {"deviceId": "device-1"}}),
+                FakeResponse({"data": {"getSubscriptions": []}}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"grocery-roatc": "new-access-token"},
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+        )
+
+        details = await api.get_loyalty_details()
+
+        assert details["loyaltyPoints"]["pointsBalance"] == 42
+        assert [request["operation"] for request in session.requests] == [
+            "getIbizaAccountDetails",
+            "DeviceId",
+            "getSubscriptions",
+            "RefreshCustomerToken",
+            "getIbizaAccountDetails",
+        ]
+        assert "deviceSessionId=device-1" in session.requests[2]["headers"]["Cookie"]
+        assert "deviceSessionId=device-1" in session.requests[3]["headers"]["Cookie"]
+        assert "deviceSessionId=device-1" in api.get_cookie_header()
 
     asyncio.run(run_test())
 
@@ -283,12 +370,16 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse({"data": {}}, cookies={"_abck": "new-abck"}),
             ]
         )
         api = DelhaizeApi(
             session,
-            cookie_header="grocery-roatc=old-access-token; grocery-rortc=refresh-token",
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token"
+            ),
         )
 
         try:
@@ -303,6 +394,7 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
+            "getSubscriptions",
             "RefreshCustomerToken",
         ]
 
@@ -329,8 +421,30 @@ class FakeSession:
         self.requests.append(
             {
                 "url": url,
+                "method": "POST",
                 "operation": json["operationName"],
                 "payload": json,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
+        return FakeRequest(self._responses.pop(0))
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict[str, str],
+        headers: dict[str, str],
+        timeout: int,
+    ) -> FakeRequest:
+        """Return the next fake response for a GraphQL GET request."""
+        self.requests.append(
+            {
+                "url": url,
+                "method": "GET",
+                "operation": params["operationName"],
+                "params": params,
                 "headers": headers,
                 "timeout": timeout,
             }
@@ -340,6 +454,7 @@ class FakeSession:
 
 def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     """Assert the refresh request matches Delhaize's browser call."""
+    assert request["method"] == "POST"
     assert request["headers"]["x-do-refresh-token"] == "true"
     assert request["headers"]["X-APOLLO-OPERATION-ID"] == REFRESH_CUSTOMER_TOKEN_HASH
     assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
@@ -347,6 +462,25 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
         "operationName": "RefreshCustomerToken",
         "variables": {},
         "extensions": REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
+    }
+
+
+def assert_get_subscriptions_request(request: dict[str, Any]) -> None:
+    """Assert the bootstrap request matches Delhaize's persisted query GET."""
+    assert request["method"] == "GET"
+    assert request["headers"]["X-Apollo-Operation-Name"] == "getSubscriptions"
+    assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
+    assert "Content-Type" not in request["headers"]
+    assert request["params"] == {
+        "operationName": "getSubscriptions",
+        "variables": json_module.dumps(
+            {"customerId": "current", "lang": "nl"},
+            separators=(",", ":"),
+        ),
+        "extensions": json_module.dumps(
+            GET_SUBSCRIPTIONS_EXTENSIONS,
+            separators=(",", ":"),
+        ),
     }
 
 

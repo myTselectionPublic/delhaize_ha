@@ -679,9 +679,10 @@ class DelhaizeApi:
 
             async with request as response:
                 response_text = await response.text()
-                self._store_response_cookies(response)
+                response_cookies = _response_cookie_items(response)
+                self._store_response_cookies(response_cookies)
                 status = response.status
-                cookie_names = sorted(response.cookies.keys())
+                cookie_names = sorted(response_cookies)
         except (ClientError, TimeoutError, CancelledError) as err:
             _LOGGER.debug("Delhaize GraphQL request failed: operation=%s error=%r", operation_name, err)
             raise DelhaizeRequestError(f"Could not reach Delhaize: {err}") from err
@@ -740,11 +741,11 @@ class DelhaizeApi:
             headers.update(extra_headers)
         return headers
 
-    def _store_response_cookies(self, response: ClientResponse) -> None:
+    def _store_response_cookies(self, response_cookies: dict[str, str]) -> None:
         """Store cookies returned by Delhaize."""
-        for key, morsel in response.cookies.items():
-            if morsel.value:
-                self._cookies[key] = morsel.value
+        for key, value in response_cookies.items():
+            if value:
+                self._cookies[key] = value
             else:
                 self._cookies.pop(key, None)
 
@@ -929,6 +930,41 @@ def _cookie_change_summary(
         ),
         "removed": sorted(before_set - after_set),
     }
+
+
+def _response_cookie_items(response: ClientResponse) -> dict[str, str]:
+    """Return response cookies, including raw Set-Cookie headers if needed."""
+    cookies = {key: morsel.value for key, morsel in response.cookies.items()}
+
+    headers = getattr(response, "headers", None)
+    getall = getattr(headers, "getall", None)
+    raw_headers = getall("Set-Cookie", []) if callable(getall) else []
+
+    for header in raw_headers:
+        cookies.update(_cookies_from_set_cookie_header(str(header)))
+
+    return cookies
+
+
+def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:
+    """Parse one Set-Cookie header without exposing values in logs."""
+    parsed = SimpleCookie()
+    try:
+        parsed.load(header)
+    except CookieError:
+        parsed = SimpleCookie()
+
+    if parsed:
+        return {key: morsel.value for key, morsel in parsed.items()}
+
+    cookie_pair = header.split(";", 1)[0]
+    if "=" not in cookie_pair:
+        return {}
+    key, value = cookie_pair.split("=", 1)
+    key = key.strip()
+    if not key:
+        return {}
+    return {key: value.strip()}
 
 
 def _graphql_get_params(payload: dict[str, Any]) -> dict[str, str]:

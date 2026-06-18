@@ -175,6 +175,54 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
     asyncio.run(run_test())
 
 
+def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
+    """Some Set-Cookie headers may not be exposed through response.cookies."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse({"data": {"getSubscriptions": []}}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    raw_set_cookie_headers=[
+                        "grocery-roatc=new-access-token; Path=/; Secure; HttpOnly",
+                    ],
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token"
+            ),
+        )
+
+        details = await api.get_loyalty_details()
+
+        assert details["loyaltyPoints"]["pointsBalance"] == 42
+        assert [request["operation"] for request in session.requests] == [
+            "getIbizaAccountDetails",
+            "getSubscriptions",
+            "RefreshCustomerToken",
+            "getIbizaAccountDetails",
+        ]
+        assert "grocery-roatc=new-access-token" in session.requests[3]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
 def test_graphql_treats_invalid_access_token_as_auth_lost() -> None:
     """Invalid access tokens should reauthenticate instead of refreshing again."""
 
@@ -499,6 +547,20 @@ class FakeRequest:
         """Exit the fake request context."""
 
 
+class FakeHeaders:
+    """Minimal response headers object with aiohttp-like getall support."""
+
+    def __init__(self, raw_set_cookie_headers: list[str]) -> None:
+        """Initialize the fake headers."""
+        self._raw_set_cookie_headers = raw_set_cookie_headers
+
+    def getall(self, key: str, default: list[str] | None = None) -> list[str]:
+        """Return all header values for a key."""
+        if key.lower() == "set-cookie":
+            return list(self._raw_set_cookie_headers)
+        return list(default or [])
+
+
 class FakeResponse:
     """Minimal aiohttp-like response for GraphQL tests."""
 
@@ -508,6 +570,7 @@ class FakeResponse:
         *,
         status: int = 200,
         cookies: dict[str, str] | None = None,
+        raw_set_cookie_headers: list[str] | None = None,
     ) -> None:
         """Initialize the response."""
         self.status = status
@@ -515,6 +578,7 @@ class FakeResponse:
         self.cookies = SimpleCookie()
         for key, value in (cookies or {}).items():
             self.cookies[key] = value
+        self.headers = FakeHeaders(raw_set_cookie_headers or [])
 
     async def text(self) -> str:
         """Return the fake response body."""

@@ -23,6 +23,10 @@ CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-wasc",
     "v_cust",
 }
+CUSTOMER_REFRESH_COOKIE_NAMES = {
+    "grocery-rortc",
+    "grocery-wasc",
+}
 
 LOGIN_MUTATION = """
 mutation Login(
@@ -597,7 +601,13 @@ class DelhaizeApi:
                 method=method,
             )
         except DelhaizeTokenRefreshRequired:
-            if not allow_token_refresh or not self.get_cookie_header():
+            if not allow_token_refresh or not self._has_customer_refresh_cookie():
+                if allow_token_refresh:
+                    _LOGGER.debug(
+                        "Delhaize token refresh unavailable for %s: cookie_names=%s",
+                        operation_name,
+                        self._cookie_names(),
+                    )
                 raise
 
             _LOGGER.debug(
@@ -753,6 +763,10 @@ class DelhaizeApi:
         """Return stored cookie names for sanitized diagnostics."""
         return sorted(self._cookies)
 
+    def _has_customer_refresh_cookie(self) -> bool:
+        """Return whether the stored cookies can refresh customer auth."""
+        return any(name in self._cookies for name in CUSTOMER_REFRESH_COOKIE_NAMES)
+
     def _decode_response(self, response_text: str, operation_name: str) -> dict[str, Any]:
         """Decode a JSON GraphQL response."""
         try:
@@ -804,6 +818,12 @@ class DelhaizeApi:
         ):
             raise DelhaizeTokenRefreshRequired(combined, errors=errors)
 
+        if (
+            operation_name.lower() not in {"login", "loginwithmfa"}
+            and _is_invalid_access_token_error(text)
+        ):
+            raise DelhaizeTokenRefreshRequired(combined, errors=errors)
+
         if _is_token_expired_error(text):
             raise DelhaizeTokenRefreshRequired(combined, errors=errors)
 
@@ -819,7 +839,6 @@ class DelhaizeApi:
             or "unauthenticated" in text
             or "unauthorized" in text
             or "anonymous user" in text
-            or "invalid access token" in text
             or "invalid_grant" in text
             or "invalidcredentials" in text.replace("_", "")
             or operation_name.lower() in {"login", "loginwithmfa"}
@@ -905,6 +924,11 @@ def _is_token_expired_error(text: str) -> bool:
         or "jwt expired" in text
         or "access token expired" in text
     )
+
+
+def _is_invalid_access_token_error(text: str) -> bool:
+    """Return whether GraphQL error text describes a rejected access token."""
+    return "invalid access token" in text
 
 
 def _customer_auth_cookies(cookies: dict[str, str]) -> dict[str, str]:

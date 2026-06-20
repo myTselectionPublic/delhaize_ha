@@ -67,6 +67,49 @@ The integration creates sensors for:
 
 <p align="center"><img src="https://raw.githubusercontent.com/myTselection/delhaize_ha/master/sensors.png"/></p>
 
+## Dashboard example
+
+The offer sensors expose detailed attributes that can be used in a Markdown card. Replace the entity IDs below with the ones Home Assistant created for your Delhaize account.
+
+```yaml
+type: markdown
+title: Delhaize promotions
+content: |
+  {% set personal_entity = 'sensor.delhaize_account_personal_offers_activated' %}
+  {% set flash_entity = 'sensor.delhaize_account_personal_offers_available' %}
+  {% set personal = state_attr(personal_entity, 'description_list') or [] %}
+  {% set flash = state_attr(flash_entity, 'flash_offer_list') or [] %}
+
+  **Personal e-Deals**  
+  Activated: {{ states(personal_entity) }}
+
+  {% if personal %}
+  | Promotion | Type | Points |
+  |---|---:|---:|
+  {% for offer in personal %}
+  | {{ offer.description }} | {{ offer.promotion_type or '-' }} | {{ offer.points or '-' }} |
+  {% endfor %}
+  {% else %}
+  No personal e-Deals found.
+  {% endif %}
+
+  **Flash e-Deals**  
+  Available: {{ state_attr(flash_entity, 'flash_available') or 0 }} /
+  {{ state_attr(flash_entity, 'flash_total') or 0 }}
+
+  {% if flash %}
+  | Promotion | Type | Status | Points |
+  |---|---:|---:|---:|
+  {% for offer in flash %}
+  | {{ offer.description }} | {{ offer.promotion_type or '-' }} | {{ 'Active' if offer.active else 'Available' }} | {{ offer.points or '-' }} |
+  {% endfor %}
+  {% else %}
+  No flash e-Deals found.
+  {% endif %}
+```
+
+The `promotion_type` field comes directly from Delhaize. It can be used in your own templates to highlight specific promotion types, for example free-product offers.
+
 ## Services
 
 `delhaize_ha.activate_personal_offers`

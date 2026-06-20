@@ -209,9 +209,40 @@ query PersonalOffersV2($lang: String!) {
 }
 """
 
+COUPON_BOOK_OFFERS_QUERY = """
+query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) {
+  couponBookOffers(activationStatus: $activationStatus, lang: $lang, mode: $mode) {
+    activatedOffersCount
+    totalOffersCount
+    totalPoints
+    flashOffers {
+      id
+      name
+      active
+      points
+      promotion
+      promotionId
+      promotionType
+      basketPromo
+      moreDetails
+      activationStartDate
+      activationEndDate
+      redemptionStartDate
+      redemptionEndDate
+    }
+  }
+}
+"""
+
 ACTIVATE_ALL_PERSONAL_OFFERS_MUTATION = """
 mutation ActivateAllPersonalOffers {
   activateAllPersonalOffers
+}
+"""
+
+ACTIVATE_COUPON_BOOK_OFFER_MUTATION = """
+mutation ActivateCouponBookOffer($offerId: String!) {
+  activateCouponBookOffer(offerId: $offerId)
 }
 """
 
@@ -535,13 +566,86 @@ class DelhaizeApi:
         )
         return data.get("personalOffersV2") or {}
 
-    async def activate_all_personal_offers(self) -> Any:
+    async def get_coupon_book_offers(
+        self,
+        *,
+        lang: str | None = None,
+        activation_status: str | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Return coupon book offers, including flash e-deals."""
+        variables: dict[str, Any] = {"lang": lang or self.language}
+        if activation_status is not None:
+            variables["activationStatus"] = activation_status
+        if mode is not None:
+            variables["mode"] = mode
+
+        data = await self.graphql(
+            "CouponBookOffers",
+            COUPON_BOOK_OFFERS_QUERY,
+            variables=variables,
+        )
+        return data.get("couponBookOffers") or {}
+
+    async def _activate_all_personal_offers(self) -> Any:
         """Activate all available personal offers."""
         data = await self.graphql(
             "ActivateAllPersonalOffers",
             ACTIVATE_ALL_PERSONAL_OFFERS_MUTATION,
         )
         return data.get("activateAllPersonalOffers")
+
+    async def activate_coupon_book_offer(self, offer_id: str) -> Any:
+        """Activate one coupon book offer."""
+        data = await self.graphql(
+            "ActivateCouponBookOffer",
+            ACTIVATE_COUPON_BOOK_OFFER_MUTATION,
+            variables={"offerId": offer_id},
+        )
+        return data.get("activateCouponBookOffer")
+
+    async def activate_inactive_coupon_book_flash_offers(self) -> list[dict[str, Any]]:
+        """Activate inactive flash e-deals from the coupon book."""
+        coupon_book_offers = await self.get_coupon_book_offers()
+        inactive_offers = self._inactive_coupon_book_flash_offers(
+            {"coupon_book_offers": coupon_book_offers}
+        )
+        if not inactive_offers:
+            return []
+
+        results: list[dict[str, Any]] = []
+        for offer in inactive_offers:
+            offer_id = offer.get("id")
+            if offer_id is None:
+                continue
+            offer_id = str(offer_id)
+            results.append(
+                {
+                    "id": offer_id,
+                    "name": offer.get("name"),
+                    "result": await self.activate_coupon_book_offer(offer_id),
+                }
+            )
+        return results
+
+    async def activate_all_personal_offers(self) -> dict[str, Any]:
+        """Activate all available personal offers and flash e-deals."""
+        result: dict[str, Any] = {
+            "personal_offers": await self._activate_all_personal_offers()
+        }
+
+        try:
+            result["coupon_book_flash_offers"] = (
+                await self.activate_inactive_coupon_book_flash_offers()
+            )
+        except DelhaizeApiError as err:
+            result["coupon_book_flash_offers_error"] = str(err)
+            _LOGGER.debug(
+                "Could not activate Delhaize coupon book flash offers: %s",
+                err,
+            )
+
+        return result
 
     async def fetch_summary(self, *, auto_activate: bool = False) -> dict[str, Any]:
         """Return all data used by the Home Assistant entities."""
@@ -550,6 +654,7 @@ class DelhaizeApi:
             "loyalty": {},
             "personal_offers_count": {},
             "personal_offers": {},
+            "coupon_book_offers": {},
         }
 
         summary["loyalty"] = await self.get_loyalty_details()
@@ -561,17 +666,25 @@ class DelhaizeApi:
             summary["personal_offers_error"] = str(err)
             _LOGGER.debug("Could not fetch Delhaize personal offer details: %s", err)
 
-        if auto_activate and self._has_inactive_personal_offers(summary):
+        try:
+            summary["coupon_book_offers"] = await self.get_coupon_book_offers()
+        except DelhaizeApiError as err:
+            summary["coupon_book_offers_error"] = str(err)
+            _LOGGER.debug("Could not fetch Delhaize coupon book offers: %s", err)
+
+        if auto_activate and self._has_inactive_offers(summary):
             inactive_offers = self._inactive_personal_offers(summary)
+            inactive_flash_offers = self._inactive_coupon_book_flash_offers(summary)
             _LOGGER.debug(
-                "Auto-activating Delhaize personal offers: inactive_count=%s",
+                "Auto-activating Delhaize offers: inactive_personal_count=%s inactive_flash_count=%s",
                 len(inactive_offers) if inactive_offers else None,
+                len(inactive_flash_offers) if inactive_flash_offers else None,
             )
             try:
                 summary["activation_result"] = await self.activate_all_personal_offers()
             except DelhaizeApiError as err:
                 summary["activation_error"] = str(err)
-                _LOGGER.debug("Could not activate Delhaize personal offers: %s", err)
+                _LOGGER.debug("Could not activate Delhaize offers: %s", err)
             else:
                 try:
                     summary["personal_offers_count"] = await self.get_personal_offers_count()
@@ -587,6 +700,14 @@ class DelhaizeApi:
                     summary["personal_offers_error"] = str(err)
                     _LOGGER.debug(
                         "Could not refresh Delhaize personal offer details after activation: %s",
+                        err,
+                    )
+                try:
+                    summary["coupon_book_offers"] = await self.get_coupon_book_offers()
+                except DelhaizeApiError as err:
+                    summary["coupon_book_offers_error"] = str(err)
+                    _LOGGER.debug(
+                        "Could not refresh Delhaize coupon book offers after activation: %s",
                         err,
                     )
 
@@ -894,6 +1015,13 @@ class DelhaizeApi:
         return total > active
 
     @staticmethod
+    def _has_inactive_offers(summary: dict[str, Any]) -> bool:
+        """Return whether any supported offer source has inactive offers."""
+        return DelhaizeApi._has_inactive_personal_offers(summary) or bool(
+            DelhaizeApi._inactive_coupon_book_flash_offers(summary)
+        )
+
+    @staticmethod
     def _inactive_personal_offers(summary: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Return inactive personal offers when the detailed offer list is available."""
         offers = summary.get("personal_offers") or {}
@@ -906,6 +1034,21 @@ class DelhaizeApi:
             if isinstance(offer, dict)
             and offer.get("active") is False
             and offer.get("offerRedeemed") is not True
+        ]
+
+    @staticmethod
+    def _inactive_coupon_book_flash_offers(
+        summary: dict[str, Any],
+    ) -> list[dict[str, Any]] | None:
+        """Return inactive flash e-deals when the coupon book list is available."""
+        offers = summary.get("coupon_book_offers") or {}
+        offer_list = offers.get("flashOffers") if isinstance(offers, dict) else None
+        if not isinstance(offer_list, list):
+            return None
+        return [
+            offer
+            for offer in offer_list
+            if isinstance(offer, dict) and offer.get("active") is False
         ]
 
 

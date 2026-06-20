@@ -569,6 +569,73 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
     asyncio.run(run_test())
 
 
+def test_activate_all_personal_offers_also_activates_flash_e_deals() -> None:
+    """Flash e-deals live in the coupon book API, not personalOffersV2."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"data": {"activateAllPersonalOffers": True}}),
+                FakeResponse(
+                    {
+                        "data": {
+                            "couponBookOffers": {
+                                "flashOffers": [
+                                    {
+                                        "id": "flash-1",
+                                        "name": "Flash deal",
+                                        "active": False,
+                                    },
+                                    {
+                                        "id": "flash-2",
+                                        "name": "Already active",
+                                        "active": True,
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                ),
+                FakeResponse({"data": {"activateCouponBookOffer": True}}),
+            ]
+        )
+        api = DelhaizeApi(session, cookie_header="grocery-roatc=access-token")
+
+        result = await api.activate_all_personal_offers()
+
+        assert result == {
+            "personal_offers": True,
+            "coupon_book_flash_offers": [
+                {"id": "flash-1", "name": "Flash deal", "result": True}
+            ],
+        }
+        assert [request["operation"] for request in session.requests] == [
+            "ActivateAllPersonalOffers",
+            "CouponBookOffers",
+            "ActivateCouponBookOffer",
+        ]
+        assert session.requests[1]["payload"]["variables"] == {"lang": "nl"}
+        assert session.requests[2]["payload"]["variables"] == {"offerId": "flash-1"}
+
+    asyncio.run(run_test())
+
+
+def test_inactive_offer_detection_includes_flash_e_deals() -> None:
+    """Auto-activation should run when only a flash e-deal is inactive."""
+    summary = {
+        "personal_offers_count": {"totalCount": 2, "activatedCount": 2},
+        "personal_offers": {"personalOfferList": []},
+        "coupon_book_offers": {
+            "flashOffers": [
+                {"id": "flash-1", "active": False},
+                {"id": "flash-2", "active": True},
+            ]
+        },
+    }
+
+    assert DelhaizeApi._has_inactive_offers(summary)  # noqa: SLF001
+
+
 class FakeSession:
     """Minimal aiohttp-like session for GraphQL tests."""
 

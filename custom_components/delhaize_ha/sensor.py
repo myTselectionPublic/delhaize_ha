@@ -265,6 +265,10 @@ def _offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
         {
             "description": description,
             "points": _int_or_none(offer.get("points")),
+            "promotion": _clean_label(offer.get("promotion")),
+            "promotion_id": _clean_label(offer.get("promotionId")),
+            "promotion_type": _clean_label(offer.get("promotionType")),
+            "basket_promo": offer.get("basketPromo"),
         }
     )
 
@@ -311,7 +315,55 @@ def _offer_count_attributes(data: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    attributes.update(_coupon_book_flash_offer_attributes(data))
+
     return _without_none(attributes)
+
+
+def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    """Return coupon book flash offer attributes."""
+    offers = _coupon_book_flash_offer_list(data)
+    if offers is None:
+        return _without_none(
+            {
+                "coupon_book_error": data.get("coupon_book_offers_error"),
+            }
+        )
+
+    return _without_none(
+        {
+            "coupon_book_total": _int_or_none(
+                _nested(data, "coupon_book_offers", "totalOffersCount")
+            ),
+            "coupon_book_activated": _int_or_none(
+                _nested(data, "coupon_book_offers", "activatedOffersCount")
+            ),
+            "coupon_book_total_points": _int_or_none(
+                _nested(data, "coupon_book_offers", "totalPoints")
+            ),
+            "flash_total": len(offers),
+            "flash_activated": sum(1 for offer in offers if offer.get("active") is True),
+            "flash_available": sum(1 for offer in offers if offer.get("active") is False),
+            "flash_offer_list": [_flash_offer_detail(offer) for offer in offers],
+            "coupon_book_error": data.get("coupon_book_offers_error"),
+        }
+    )
+
+
+def _flash_offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
+    """Return a structured coupon book flash offer detail."""
+    return _without_none(
+        {
+            **_offer_detail(offer),
+            "id": _clean_label(offer.get("id")),
+            "active": offer.get("active"),
+            "more_details": _clean_label(offer.get("moreDetails")),
+            "activation_start_date": _clean_label(offer.get("activationStartDate")),
+            "activation_end_date": _clean_label(offer.get("activationEndDate")),
+            "redemption_start_date": _clean_label(offer.get("redemptionStartDate")),
+            "redemption_end_date": _clean_label(offer.get("redemptionEndDate")),
+        }
+    )
 
 
 def _visible_personal_offers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -325,6 +377,14 @@ def _visible_personal_offers(data: dict[str, Any]) -> list[dict[str, Any]] | Non
 def _personal_offer_list(data: dict[str, Any]) -> list[dict[str, Any]] | None:
     """Return the detailed personal offer list when available."""
     offers = _nested(data, "personal_offers", "personalOfferList")
+    if not isinstance(offers, list):
+        return None
+    return [offer for offer in offers if isinstance(offer, dict)]
+
+
+def _coupon_book_flash_offer_list(data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return the detailed coupon book flash offer list when available."""
+    offers = _nested(data, "coupon_book_offers", "flashOffers")
     if not isinstance(offers, list):
         return None
     return [offer for offer in offers if isinstance(offer, dict)]

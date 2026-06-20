@@ -68,14 +68,7 @@ SENSOR_DESCRIPTIONS: tuple[DelhaizeSensorEntityDescription, ...] = (
         name="Personal offers available",
         icon="mdi:ticket-percent-outline",
         value_fn=lambda data: _available_offers(data),
-        attr_fn=lambda data: _without_none(
-            {
-                **_offer_count_attributes(data),
-                "activation_result": data.get("activation_result"),
-                "activation_error": data.get("activation_error"),
-                "activation_refresh_error": data.get("activation_refresh_error"),
-            }
-        ),
+        attr_fn=lambda data: _offer_count_attributes(data),
     ),
     DelhaizeSensorEntityDescription(
         key="personal_offers_total",
@@ -273,64 +266,15 @@ def _offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
             "description": description,
             "points": _int_or_none(offer.get("points")),
             "promotion": _clean_label(offer.get("promotion")),
-            "promotion_id": _clean_label(offer.get("promotionId")),
             "promotion_type": _clean_label(offer.get("promotionType")),
-            "basket_promo": offer.get("basketPromo"),
-            "validity": _clean_label(offer.get("validity")),
-            "activation_start_date": _clean_label(offer.get("activationStartDate")),
-            "activation_end_date": _clean_label(offer.get("activationEndDate")),
-            "redemption_start_date": _clean_label(offer.get("redemptionStartDate")),
-            "redemption_end_date": _clean_label(offer.get("redemptionEndDate")),
             "available_until": _offer_available_until(offer),
         }
     )
 
 
 def _offer_count_attributes(data: dict[str, Any]) -> dict[str, Any]:
-    """Return diagnostic attributes for personal offer count differences."""
-    offer_list = _personal_offer_list(data)
-    visible_offers = _visible_personal_offers(data)
-    total = _total_offers(data)
-    activated = _activated_offers(data)
-    api_total = _int_or_none(_nested(data, "personal_offers_count", "totalCount"))
-    api_activated = _int_or_none(_nested(data, "personal_offers_count", "activatedCount"))
-    attributes: dict[str, Any] = {
-        "count_source": (
-            "personal_offer_list" if visible_offers is not None else "personal_offers_count"
-        ),
-        "total": total,
-        "activated": activated,
-        "available": _available_offers(data),
-        "api_total": api_total,
-        "api_activated": api_activated,
-        "api_total_delta": (
-            api_total - total if api_total is not None and total is not None else None
-        ),
-        "api_activated_delta": (
-            api_activated - activated
-            if api_activated is not None and activated is not None
-            else None
-        ),
-    }
-
-    if offer_list is not None and visible_offers is not None:
-        attributes.update(
-            {
-                "listed_total": len(offer_list),
-                "listed_visible": len(visible_offers),
-                "listed_activated": sum(
-                    1 for offer in visible_offers if offer.get("active") is True
-                ),
-                "listed_available": sum(
-                    1 for offer in visible_offers if offer.get("active") is False
-                ),
-                "hidden_redeemed": len(offer_list) - len(visible_offers),
-            }
-        )
-
-    attributes.update(_coupon_book_flash_offer_attributes(data))
-
-    return _without_none(attributes)
+    """Return offer attributes used by the dashboard Markdown example."""
+    return _coupon_book_flash_offer_attributes(data)
 
 
 def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:
@@ -338,40 +282,18 @@ def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:
     flash_offers = _coupon_book_flash_offer_list(data)
     personal_offers = _coupon_book_personal_offer_list(data)
     if flash_offers is None and personal_offers is None:
-        return _without_none(
-            {
-                "coupon_book_error": data.get("coupon_book_offers_error"),
-            }
-        )
+        return {}
 
     flash_offers = flash_offers or []
     personal_offers = personal_offers or []
     return _without_none(
         {
-            "coupon_book_total": _int_or_none(
-                _nested(data, "coupon_book_offers", "totalOffersCount")
-            ),
-            "coupon_book_activated": _int_or_none(
-                _nested(data, "coupon_book_offers", "activatedOffersCount")
-            ),
-            "coupon_book_total_points": _int_or_none(
-                _nested(data, "coupon_book_offers", "totalPoints")
-            ),
-            "coupon_book_personal_total": len(personal_offers),
-            "coupon_book_personal_activated": sum(
-                1 for offer in personal_offers if offer.get("active") is True
-            ),
-            "coupon_book_personal_available": sum(
-                1 for offer in personal_offers if offer.get("active") is False
-            ),
             "coupon_book_personal_offer_list": [
                 _coupon_book_offer_detail(offer) for offer in personal_offers
             ],
             "flash_total": len(flash_offers),
-            "flash_activated": sum(1 for offer in flash_offers if offer.get("active") is True),
             "flash_available": sum(1 for offer in flash_offers if offer.get("active") is False),
             "flash_offer_list": [_coupon_book_offer_detail(offer) for offer in flash_offers],
-            "coupon_book_error": data.get("coupon_book_offers_error"),
         }
     )
 
@@ -381,13 +303,7 @@ def _coupon_book_offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
     return _without_none(
         {
             **_offer_detail(offer),
-            "id": _clean_label(offer.get("id")),
             "active": offer.get("active"),
-            "more_details": _clean_label(offer.get("moreDetails")),
-            "activation_start_date": _clean_label(offer.get("activationStartDate")),
-            "activation_end_date": _clean_label(offer.get("activationEndDate")),
-            "redemption_start_date": _clean_label(offer.get("redemptionStartDate")),
-            "redemption_end_date": _clean_label(offer.get("redemptionEndDate")),
         }
     )
 
@@ -435,25 +351,12 @@ def _burnable_offer_product_count(data: dict[str, Any]) -> int | None:
 def _burnable_offer_discount_attributes(data: dict[str, Any]) -> dict[str, Any]:
     """Return burnable offer products and their discount values."""
     products = _burnable_offer_discount_product_list(data)
-    offers = _burnable_offer_sources(data)
     if products is None:
-        return _without_none(
-            {
-                "error": data.get("burnable_offers_error")
-                or data.get("burnable_offer_ranges_error"),
-            }
-        )
+        return {}
 
     return _without_none(
         {
-            "offer_total": len(offers) if offers is not None else None,
-            "product_total": len(products),
-            "applicable_product_total": sum(
-                1 for product in products if product.get("can_apply") is True
-            ),
             "product_discount_list": products,
-            "error": data.get("burnable_offers_error")
-            or data.get("burnable_offer_ranges_error"),
         }
     )
 
@@ -479,7 +382,6 @@ def _burnable_offer_discount_product_list(
             if not isinstance(product, dict):
                 continue
             price = product.get("price") if isinstance(product.get("price"), dict) else {}
-            stock = product.get("stock") if isinstance(product.get("stock"), dict) else {}
             original_price_value = _price_amount(price.get("wasPrice"))
             if original_price_value is None:
                 original_price_value = _price_amount(price.get("value"))
@@ -487,46 +389,16 @@ def _burnable_offer_discount_product_list(
             products.append(
                 _without_none(
                     {
-                        "offer_id": _clean_label(offer.get("id")),
                         "offer": _clean_label(offer.get("name")),
-                        "offer_active": offer.get("active"),
-                        "can_apply": _burnable_offer_can_apply(offer, product),
                         "discount_points": discount_points,
-                        "discount_value": point_price_value,
                         "point_price_value": point_price_value,
-                        "discount_percentage": discount_percentage,
                         "discount_percentage_formatted": _format_percentage(
                             discount_percentage
                         ),
-                        "savings_percentage": _percentage_savings(
-                            point_price_value,
-                            original_price_value,
-                        ),
                         "days_remaining": _int_or_none(offer.get("daysRemaining")),
-                        "max_uses": _int_or_none(offer.get("maxUses")),
-                        "available_redemptions": _int_or_none(
-                            offer.get("availableRedemptions")
-                        ),
-                        "registered_redemptions": _int_or_none(
-                            offer.get("registeredRedemptions")
-                        ),
-                        "product_code": _clean_label(product.get("code")),
                         "product": _clean_label(product.get("name")),
-                        "brand": _product_brand(product),
-                        "product_available": product.get("available"),
-                        "in_stock": stock.get("inStock"),
-                        "available_from_date": _clean_label(stock.get("availableFromDate")),
-                        "current_price": _clean_label(price.get("formattedValue")),
-                        "current_price_value": _price_amount(price.get("value")),
                         "original_price": _clean_label(price.get("wasPrice"))
                         or _clean_label(price.get("formattedValue")),
-                        "original_price_value": original_price_value,
-                        "discounted_price": _clean_label(
-                            price.get("discountedPriceFormatted")
-                        ),
-                        "unit_price": _clean_label(price.get("unitPriceFormatted")),
-                        "currency": _clean_label(price.get("currencyIso")),
-                        "url": _clean_label(product.get("url")),
                     }
                 )
             )
@@ -554,34 +426,6 @@ def _burnable_offer_sources(data: dict[str, Any]) -> list[dict[str, Any]] | None
     return list(offers_by_id.values())
 
 
-def _burnable_offer_can_apply(offer: dict[str, Any], product: dict[str, Any]) -> bool:
-    """Return whether a burnable offer can currently be applied to a product."""
-    stock = product.get("stock") if isinstance(product.get("stock"), dict) else {}
-    return (
-        offer.get("activationAllowed") is True
-        and offer.get("enoughPointsToBurn") is True
-        and offer.get("productAvailable") is not False
-        and product.get("available") is not False
-        and (
-            stock.get("inStock") is True
-            or stock.get("inStockBeforeMaxAdvanceOrderingDate") is True
-            or not stock
-        )
-    )
-
-
-def _product_brand(product: dict[str, Any]) -> str | None:
-    """Return a product brand label from manufacturer fields."""
-    return ", ".join(
-        value
-        for value in (
-            _clean_label(product.get("manufacturerName")),
-            _clean_label(product.get("manufacturerSubBrandName")),
-        )
-        if value
-    ) or None
-
-
 def _offer_available_until(offer: dict[str, Any]) -> str | None:
     """Return the best available end date or validity label for an offer."""
     for key in ("redemptionEndDate", "activationEndDate", "validity"):
@@ -602,14 +446,7 @@ def _percentage(value: float | None, total: float | None) -> float | None:
     """Return value as a percentage of total."""
     if value is None or total in (None, 0):
         return None
-    return round((value / total) * 100, 1)
-
-
-def _percentage_savings(point_price: float | None, original_price: float | None) -> float | None:
-    """Return the savings percentage versus the original price."""
-    if point_price is None or original_price in (None, 0):
-        return None
-    return round((max(0, original_price - point_price) / original_price) * 100, 1)
+    return round((1 - (value / total)) * 100, 1)
 
 
 def _format_percentage(value: float | None) -> str | None:

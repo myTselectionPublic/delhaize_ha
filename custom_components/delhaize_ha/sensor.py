@@ -474,11 +474,16 @@ def _burnable_offer_discount_product_list(
         if not isinstance(offer_products, list):
             continue
         discount_points = _int_or_none(offer.get("priceToBurn"))
+        point_price_value = _points_to_euro(discount_points)
         for product in offer_products:
             if not isinstance(product, dict):
                 continue
             price = product.get("price") if isinstance(product.get("price"), dict) else {}
             stock = product.get("stock") if isinstance(product.get("stock"), dict) else {}
+            original_price_value = _price_amount(price.get("wasPrice"))
+            if original_price_value is None:
+                original_price_value = _price_amount(price.get("value"))
+            discount_percentage = _percentage(point_price_value, original_price_value)
             products.append(
                 _without_none(
                     {
@@ -487,7 +492,16 @@ def _burnable_offer_discount_product_list(
                         "offer_active": offer.get("active"),
                         "can_apply": _burnable_offer_can_apply(offer, product),
                         "discount_points": discount_points,
-                        "discount_value": _points_to_euro(discount_points),
+                        "discount_value": point_price_value,
+                        "point_price_value": point_price_value,
+                        "discount_percentage": discount_percentage,
+                        "discount_percentage_formatted": _format_percentage(
+                            discount_percentage
+                        ),
+                        "savings_percentage": _percentage_savings(
+                            point_price_value,
+                            original_price_value,
+                        ),
                         "days_remaining": _int_or_none(offer.get("daysRemaining")),
                         "max_uses": _int_or_none(offer.get("maxUses")),
                         "available_redemptions": _int_or_none(
@@ -503,8 +517,10 @@ def _burnable_offer_discount_product_list(
                         "in_stock": stock.get("inStock"),
                         "available_from_date": _clean_label(stock.get("availableFromDate")),
                         "current_price": _clean_label(price.get("formattedValue")),
-                        "current_price_value": _float_or_none(price.get("value")),
-                        "original_price": _clean_label(price.get("wasPrice")),
+                        "current_price_value": _price_amount(price.get("value")),
+                        "original_price": _clean_label(price.get("wasPrice"))
+                        or _clean_label(price.get("formattedValue")),
+                        "original_price_value": original_price_value,
                         "discounted_price": _clean_label(
                             price.get("discountedPriceFormatted")
                         ),
@@ -582,12 +598,61 @@ def _points_to_euro(points: int | None) -> float | None:
     return round(points * 0.01, 2)
 
 
+def _percentage(value: float | None, total: float | None) -> float | None:
+    """Return value as a percentage of total."""
+    if value is None or total in (None, 0):
+        return None
+    return round(value / total * 100, 1)
+
+
+def _percentage_savings(point_price: float | None, original_price: float | None) -> float | None:
+    """Return the savings percentage versus the original price."""
+    if point_price is None or original_price in (None, 0):
+        return None
+    return round(max(0, original_price - point_price) / original_price * 100, 1)
+
+
+def _format_percentage(value: float | None) -> str | None:
+    """Return a compact percentage label."""
+    if value is None:
+        return None
+    if value.is_integer():
+        return f"{int(value)}%"
+    return f"{value}%"
+
+
 def _int_or_none(value: Any) -> int | None:
     """Return a value as int when possible."""
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _price_amount(value: Any) -> float | None:
+    """Return a price amount from numeric or formatted values."""
+    if isinstance(value, int | float):
+        return float(value)
+    if value is None:
+        return None
+
+    label = str(value).strip()
+    if not label:
+        return None
+    numeric = "".join(
+        character
+        for character in label
+        if character.isdigit() or character in {",", ".", "-"}
+    )
+    if not numeric:
+        return None
+
+    if "," in numeric and "." in numeric:
+        numeric = numeric.replace(".", "").replace(",", ".")
+    elif "," in numeric:
+        numeric = numeric.replace(",", ".")
+
+    return _float_or_none(numeric)
 
 
 def _float_or_none(value: Any) -> float | None:

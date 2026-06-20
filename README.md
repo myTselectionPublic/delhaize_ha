@@ -141,10 +141,10 @@ content: |
   Products: {{ states(burnable_entity) }}
 
   {% if burnable %}
-  | Product | Offer | Discount | Current | Original | Remaining |
+  | Product | Offer | Point price | Original | Discount | Remaining |
   |---|---|---:|---:|---:|---:|
   {% for product in burnable %}
-  | {{ product.get('product', '-') }} | {{ product.get('offer', '-') }} | €{{ product.get('discount_value', '-') }} / {{ product.get('discount_points', '-') }} pts | {{ product.get('current_price', '-') }} | {{ product.get('original_price', '-') }} | {{ product.get('days_remaining', '-') }} days |
+  | {{ product.get('product', '-') }} | {{ product.get('offer', '-') }} | €{{ product.get('point_price_value', '-') }} / {{ product.get('discount_points', '-') }} pts | {{ product.get('original_price', '-') }} | {{ product.get('discount_percentage_formatted', '-') }} | {{ product.get('days_remaining', '-') }} days |
   {% endfor %}
   {% else %}
   No burnable product discounts found.
@@ -153,7 +153,7 @@ content: |
   {% endfor %}
 ```
 
-The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For burnable offers, the integration also exposes `discount_points` and `discount_value`, where `discount_value` assumes 1 point = €0.01. Original product price is exposed as `original_price` when Delhaize returns `price.wasPrice`.
+The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For burnable offers, the integration exposes `discount_points`, `point_price_value`, and `discount_percentage`, where `point_price_value` assumes 1 point = €0.01 and `discount_percentage` is calculated as point price divided by the original product price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
 
 ## Services
 

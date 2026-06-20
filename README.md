@@ -69,19 +69,35 @@ The integration creates sensors for:
 
 ## Dashboard example
 
-The offer sensors expose detailed attributes that can be used in a Markdown card. Replace the entity IDs below with the ones Home Assistant created for your Delhaize account.
+The offer sensors expose detailed attributes that can be used in a Markdown card. This example searches for Delhaize offer sensors automatically, so it can work with one or more configured accounts without hardcoding entity IDs.
 
 ```yaml
 type: markdown
 title: Delhaize promotions
 content: |
-  {% set personal_entity = 'sensor.delhaize_account_personal_offers_activated' %}
-  {% set flash_entity = 'sensor.delhaize_account_personal_offers_available' %}
-  {% set personal = state_attr(personal_entity, 'description_list') or [] %}
-  {% set flash = state_attr(flash_entity, 'flash_offer_list') or [] %}
+  {% set ns = namespace(offer_sensors=[]) %}
+  {% for sensor in states.sensor %}
+    {% if sensor.entity_id.startswith('sensor.delhaize_') and sensor.entity_id.endswith('_personal_offers_available') %}
+      {% set ns.offer_sensors = ns.offer_sensors + [sensor.entity_id] %}
+    {% endif %}
+  {% endfor %}
+
+  {% if not ns.offer_sensors %}
+  No Delhaize offer sensors found.
+  {% endif %}
+
+  {% for available_entity in ns.offer_sensors %}
+  {% set activated_entity = available_entity
+    | replace('_personal_offers_available', '_personal_offers_activated') %}
+  {% set account = (state_attr(available_entity, 'friendly_name') or available_entity)
+    | replace(' Personal offers available', '') %}
+  {% set personal = state_attr(activated_entity, 'description_list') or [] %}
+  {% set flash = state_attr(available_entity, 'flash_offer_list') or [] %}
+
+  ## {{ account }}
 
   **Personal e-Deals**  
-  Activated: {{ states(personal_entity) }}
+  Activated: {{ states(activated_entity) }}
 
   {% if personal %}
   | Promotion | Type | Points |
@@ -94,8 +110,8 @@ content: |
   {% endif %}
 
   **Flash e-Deals**  
-  Available: {{ state_attr(flash_entity, 'flash_available') or 0 }} /
-  {{ state_attr(flash_entity, 'flash_total') or 0 }}
+  Available: {{ state_attr(available_entity, 'flash_available') or 0 }} /
+  {{ state_attr(available_entity, 'flash_total') or 0 }}
 
   {% if flash %}
   | Promotion | Type | Status | Points |
@@ -106,6 +122,8 @@ content: |
   {% else %}
   No flash e-Deals found.
   {% endif %}
+
+  {% endfor %}
 ```
 
 The `promotion_type` field comes directly from Delhaize. It can be used in your own templates to highlight specific promotion types, for example free-product offers.

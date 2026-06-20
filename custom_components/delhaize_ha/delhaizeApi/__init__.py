@@ -281,35 +281,35 @@ class DelhaizeApi:
         if value.lower().startswith("cookie:"):
             value = value.split(":", 1)[1].strip()
 
+        pairs = _cookie_header_pairs(value)
+        if pairs:
+            for key, cookie_value in pairs:
+                self._cookies[key] = cookie_value
+            return
+
         parsed = SimpleCookie()
         try:
             parsed.load(value)
         except CookieError:
-            parsed = SimpleCookie()
-
-        if parsed:
-            for key, morsel in parsed.items():
-                self._cookies[key] = morsel.value
             return
 
-        for part in value.split(";"):
-            if "=" not in part:
-                continue
-            key, cookie_value = part.split("=", 1)
-            key = key.strip()
-            if key:
-                self._cookies[key] = cookie_value.strip()
+        for key, morsel in parsed.items():
+            self._cookies[key] = morsel.value
 
     def get_cookie_header(self) -> str:
         """Return the current Cookie header value."""
-        return "; ".join(f"{key}={value}" for key, value in sorted(self._cookies.items()))
+        return "; ".join(f"{key}={value}" for key, value in self._cookies.items())
 
-    async def get_device_id(self) -> str | None:
+    async def get_device_id(self, *, allow_token_refresh: bool = True) -> str | None:
         """Initialize Delhaize device cookies and return the device id."""
         _LOGGER.debug("Initializing Delhaize device session")
-        data = await self.graphql("DeviceId", DEVICE_ID_QUERY)
+        data = await self.graphql(
+            "DeviceId",
+            DEVICE_ID_QUERY,
+            allow_token_refresh=allow_token_refresh,
+        )
         device_id = data.get("deviceId")
-        if device_id and DEVICE_SESSION_COOKIE_NAME not in self._cookies:
+        if device_id:
             self._cookies[DEVICE_SESSION_COOKIE_NAME] = str(device_id)
         return device_id
 
@@ -409,55 +409,68 @@ class DelhaizeApi:
             DEVICE_SESSION_COOKIE_NAME in self._cookies,
             before_cookie_names,
         )
-        try:
-            data = await self.graphql(
-                "RefreshCustomerToken",
-                extensions=REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
-                extra_headers={
-                    "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
-                    "x-do-refresh-token": "true",
-                },
-                allow_token_refresh=False,
+        for attempt in range(2):
+            attempt_before_cookies = dict(self._cookies)
+            try:
+                data = await self.graphql(
+                    "RefreshCustomerToken",
+                    extensions=REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
+                    extra_headers={
+                        "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
+                        "x-do-refresh-token": "true",
+                    },
+                    allow_token_refresh=False,
+                )
+            except DelhaizeApiError as err:
+                _LOGGER.warning(
+                    "Delhaize customer auth cookie refresh failed: error=%s errors=%s cookie_names_before=%s cookie_names_after=%s",
+                    err,
+                    summarize_graphql_errors(err.errors),
+                    before_cookie_names,
+                    self._cookie_names(),
+                )
+                raise
+
+            auth_cookie_changes = _cookie_change_summary(
+                before_auth_cookies,
+                _customer_auth_cookies(self._cookies),
             )
-        except DelhaizeApiError as err:
-            _LOGGER.warning(
-                "Delhaize customer auth cookie refresh failed: error=%s errors=%s cookie_names_before=%s cookie_names_after=%s",
-                err,
-                summarize_graphql_errors(err.errors),
-                before_cookie_names,
+            cookie_changes = _cookie_change_summary(attempt_before_cookies, self._cookies)
+            refresh_field_present = "refreshCustomerAuthCookies" in data
+            refreshed = refresh_field_present and _has_cookie_changes(auth_cookie_changes)
+            _LOGGER.debug(
+                "Delhaize customer auth cookie refresh response: attempt=%s refreshed=%s auth_cookie_changes=%s cookie_changes=%s cookie_names_after=%s",
+                attempt + 1,
+                refreshed,
+                auth_cookie_changes,
+                cookie_changes,
                 self._cookie_names(),
             )
-            raise
-
-        auth_cookie_changes = _cookie_change_summary(
-            before_auth_cookies,
-            _customer_auth_cookies(self._cookies),
-        )
-        refreshed = "refreshCustomerAuthCookies" in data
-        _LOGGER.debug(
-            "Delhaize customer auth cookie refresh response: refreshed=%s auth_cookie_changes=%s cookie_changes=%s cookie_names_after=%s",
-            refreshed,
-            auth_cookie_changes,
-            _cookie_change_summary(before_cookies, self._cookies),
-            self._cookie_names(),
-        )
-        if not refreshed:
+            if not refresh_field_present:
+                raise DelhaizeAuthError(
+                    "Delhaize refresh response did not include customer auth refresh data"
+                )
+            if refreshed:
+                return refreshed
+            if attempt == 0 and _has_cookie_changes(cookie_changes):
+                _LOGGER.debug(
+                    "Retrying Delhaize customer auth cookie refresh after non-auth cookie changes"
+                )
+                continue
             raise DelhaizeAuthError(
-                "Delhaize refresh response did not include customer auth refresh data"
+                "Delhaize refresh did not update customer auth cookies"
             )
-        return refreshed
+
+        raise DelhaizeAuthError("Delhaize refresh did not update customer auth cookies")
 
     async def _prepare_customer_refresh_context(self) -> None:
         """Mimic the browser calls that establish customer refresh context."""
-        if (
-            DEVICE_SESSION_COOKIE_NAME not in self._cookies
-            and "grocery-rortc" in self._cookies
-        ):
+        if self._has_customer_refresh_cookie():
             try:
-                await self.get_device_id()
+                await self.get_device_id(allow_token_refresh=False)
             except DelhaizeApiError as err:
                 _LOGGER.debug(
-                    "Could not initialize Delhaize device session before refresh: error=%s errors=%s cookie_names=%s",
+                    "Could not refresh Delhaize device session before auth refresh: error=%s errors=%s cookie_names=%s",
                     err,
                     summarize_graphql_errors(err.errors),
                     self._cookie_names(),
@@ -732,14 +745,18 @@ class DelhaizeApi:
         """Build request headers matching the Delhaize web client."""
         headers = {
             "Accept": "*/*",
+            "Accept-Language": _accept_language(self.language),
             "Origin": BASE_URL,
-            "Referer": f"{BASE_URL}/{self.language}/login",
+            "Referer": self._referer(operation_name),
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0 Safari/537.36"
             ),
-            "X-Apollo-Operation-Name": operation_name,
+            "X-APOLLO-OPERATION-NAME": operation_name,
             "x-default-gql-refresh-token-disabled": "true",
         }
         if include_content_type:
@@ -750,6 +767,17 @@ class DelhaizeApi:
         if extra_headers:
             headers.update(extra_headers)
         return headers
+
+    def _referer(self, operation_name: str) -> str:
+        """Return the browser page that would usually issue this operation."""
+        if operation_name.lower() in {
+            "login",
+            "loginwithmfa",
+            "sendloginmfaotpcode",
+            "getloginwithssolink",
+        }:
+            return f"{BASE_URL}/{self.language}/login"
+        return f"{BASE_URL}/{self.language}/my-account/dashboard"
 
     def _store_response_cookies(self, response_cookies: dict[str, str]) -> None:
         """Store cookies returned by Delhaize."""
@@ -940,6 +968,11 @@ def _customer_auth_cookies(cookies: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _has_cookie_changes(changes: dict[str, list[str]]) -> bool:
+    """Return whether a cookie change summary has any changed entries."""
+    return any(changes.values())
+
+
 def _cookie_change_summary(
     before: dict[str, str],
     after: dict[str, str],
@@ -991,6 +1024,19 @@ def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:
     return {key: value.strip()}
 
 
+def _cookie_header_pairs(header: str) -> list[tuple[str, str]]:
+    """Parse a browser Cookie header while preserving pair order."""
+    pairs: list[tuple[str, str]] = []
+    for part in header.split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip()
+        if key:
+            pairs.append((key, value.strip()))
+    return pairs
+
+
 def _graphql_get_params(payload: dict[str, Any]) -> dict[str, str]:
     """Return GraphQL GET parameters matching Apollo persisted query requests."""
     params = {"operationName": str(payload["operationName"])}
@@ -1001,6 +1047,16 @@ def _graphql_get_params(payload: dict[str, Any]) -> dict[str, str]:
     if "query" in payload:
         params["query"] = str(payload["query"])
     return params
+
+
+def _accept_language(language: str) -> str:
+    """Return an Accept-Language header close to a Belgian browser."""
+    normalized = language.lower()
+    if normalized == "fr":
+        return "fr-BE,fr;q=0.9,nl-BE;q=0.8,nl;q=0.7,en-US;q=0.6,en;q=0.5"
+    if normalized == "en":
+        return "en-US,en;q=0.9,nl-BE;q=0.8,nl;q=0.7,fr-BE;q=0.6,fr;q=0.5"
+    return "nl-BE,nl;q=0.9,fr-BE;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5"
 
 
 def summarize_graphql_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

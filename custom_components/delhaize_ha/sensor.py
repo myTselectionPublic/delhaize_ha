@@ -602,14 +602,14 @@ def _percentage(value: float | None, total: float | None) -> float | None:
     """Return value as a percentage of total."""
     if value is None or total in (None, 0):
         return None
-    return round(value / total * 100, 1)
+    return round((value / total) * 100, 1)
 
 
 def _percentage_savings(point_price: float | None, original_price: float | None) -> float | None:
     """Return the savings percentage versus the original price."""
     if point_price is None or original_price in (None, 0):
         return None
-    return round(max(0, original_price - point_price) / original_price * 100, 1)
+    return round((max(0, original_price - point_price) / original_price) * 100, 1)
 
 
 def _format_percentage(value: float | None) -> str | None:

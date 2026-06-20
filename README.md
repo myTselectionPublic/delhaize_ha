@@ -106,8 +106,7 @@ content: |
   {% if personal %}
   | Promotion | Details | Type | Points | Until |
   |---|---|---:|---:|---:|
-  {% for offer in personal %}
-  | {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
+  {% for offer in personal %}| {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
   {% endfor %}
   {% else %}
   No personal e-Deals found.
@@ -118,8 +117,7 @@ content: |
 
   | Promotion | Details | Type | Status | Until |
   |---|---|---:|---:|---:|
-  {% for offer in coupon_personal %}
-  | {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('available_until', '-') }} |
+  {% for offer in coupon_personal %}| {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('available_until', '-') }} |
   {% endfor %}
   {% endif %}
 
@@ -130,8 +128,7 @@ content: |
   {% if flash %}
   | Promotion | Details | Type | Status | Points | Until |
   |---|---|---:|---:|---:|---:|
-  {% for offer in flash %}
-  | {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
+  {% for offer in flash %}| {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
   {% endfor %}
   {% else %}
   No flash e-Deals found.
@@ -143,8 +140,7 @@ content: |
   {% if burnable %}
   | Product | Offer | Point price | Original | Discount | Remaining |
   |---|---|---:|---:|---:|---:|
-  {% for product in burnable %}
-  | {{ product.get('product', '-') }} | {{ product.get('offer', '-') }} | €{{ product.get('point_price_value', '-') }} / {{ product.get('discount_points', '-') }} pts | {{ product.get('original_price', '-') }} | {{ product.get('discount_percentage_formatted', '-') }} | {{ product.get('days_remaining', '-') }} days |
+  {% for product in burnable %}| {{ product.get('product', '-') | replace('|',' ') }} | {{ product.get('offer', '-')| replace('|',' ') }} | €{{ product.get('point_price_value', '-') }} / {{ product.get('discount_points', '-') }} pts | {{ product.get('original_price', '-') }} | {{ product.get('discount_percentage_formatted', '-') }} | {{ product.get('days_remaining', '-') }} days |
   {% endfor %}
   {% else %}
   No burnable product discounts found.

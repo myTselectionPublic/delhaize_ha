@@ -89,10 +89,14 @@ content: |
   {% for available_entity in ns.offer_sensors %}
   {% set activated_entity = available_entity
     | replace('_personal_offers_available', '_personal_offers_activated') %}
+  {% set burnable_entity = available_entity
+    | replace('_personal_offers_available', '_burnable_offer_discounts') %}
   {% set account = (state_attr(available_entity, 'friendly_name') or available_entity)
     | replace(' Personal offers available', '') %}
   {% set personal = state_attr(activated_entity, 'description_list') or [] %}
   {% set flash = state_attr(available_entity, 'flash_offer_list') or [] %}
+  {% set coupon_personal = state_attr(available_entity, 'coupon_book_personal_offer_list') or [] %}
+  {% set burnable = state_attr(burnable_entity, 'product_discount_list') or [] %}
 
   ## {{ account }}
 
@@ -100,13 +104,23 @@ content: |
   Activated: {{ states(activated_entity) }}
 
   {% if personal %}
-  | Promotion | Type | Points |
-  |---|---:|---:|
+  | Promotion | Details | Type | Points | Until |
+  |---|---|---:|---:|---:|
   {% for offer in personal %}
-  | {{ offer.get('description', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ offer.get('points', '-') }} |
+  | {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
   {% endfor %}
   {% else %}
   No personal e-Deals found.
+  {% endif %}
+
+  {% if coupon_personal %}
+  **Coupon book personal offers**
+
+  | Promotion | Details | Type | Status | Until |
+  |---|---|---:|---:|---:|
+  {% for offer in coupon_personal %}
+  | {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('available_until', '-') }} |
+  {% endfor %}
   {% endif %}
 
   **Flash e-Deals**  
@@ -114,19 +128,32 @@ content: |
   {{ state_attr(available_entity, 'flash_total') or 0 }}
 
   {% if flash %}
-  | Promotion | Type | Status | Points |
-  |---|---:|---:|---:|
+  | Promotion | Details | Type | Status | Points | Until |
+  |---|---|---:|---:|---:|---:|
   {% for offer in flash %}
-  | {{ offer.get('description', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('points', '-') }} |
+  | {{ offer.get('description', '-') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
   {% endfor %}
   {% else %}
   No flash e-Deals found.
   {% endif %}
 
+  **Burnable product discounts**
+  Products: {{ states(burnable_entity) }}
+
+  {% if burnable %}
+  | Product | Offer | Discount | Current | Original | Remaining |
+  |---|---|---:|---:|---:|---:|
+  {% for product in burnable %}
+  | {{ product.get('product', '-') }} | {{ product.get('offer', '-') }} | €{{ product.get('discount_value', '-') }} / {{ product.get('discount_points', '-') }} pts | {{ product.get('current_price', '-') }} | {{ product.get('original_price', '-') }} | {{ product.get('days_remaining', '-') }} days |
+  {% endfor %}
+  {% else %}
+  No burnable product discounts found.
+  {% endif %}
+
   {% endfor %}
 ```
 
-The `promotion_type` field comes directly from Delhaize. It can be used in your own templates to highlight specific promotion types, for example free-product offers.
+The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For burnable offers, the integration also exposes `discount_points` and `discount_value`, where `discount_value` assumes 1 point = €0.01. Original product price is exposed as `original_price` when Delhaize returns `price.wasPrice`.
 
 ## Services
 

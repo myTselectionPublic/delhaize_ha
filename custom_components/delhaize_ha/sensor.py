@@ -116,6 +116,13 @@ SENSOR_DESCRIPTIONS: tuple[DelhaizeSensorEntityDescription, ...] = (
         ),
     ),
     DelhaizeSensorEntityDescription(
+        key="burnable_offer_discounts",
+        name="Burnable offer discounts",
+        icon="mdi:cart-percent",
+        value_fn=lambda data: _burnable_offer_product_count(data),
+        attr_fn=lambda data: _burnable_offer_discount_attributes(data),
+    ),
+    DelhaizeSensorEntityDescription(
         key="loyalty_profile",
         name="Loyalty profile",
         icon="mdi:account-star-outline",
@@ -269,6 +276,12 @@ def _offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
             "promotion_id": _clean_label(offer.get("promotionId")),
             "promotion_type": _clean_label(offer.get("promotionType")),
             "basket_promo": offer.get("basketPromo"),
+            "validity": _clean_label(offer.get("validity")),
+            "activation_start_date": _clean_label(offer.get("activationStartDate")),
+            "activation_end_date": _clean_label(offer.get("activationEndDate")),
+            "redemption_start_date": _clean_label(offer.get("redemptionStartDate")),
+            "redemption_end_date": _clean_label(offer.get("redemptionEndDate")),
+            "available_until": _offer_available_until(offer),
         }
     )
 
@@ -322,14 +335,17 @@ def _offer_count_attributes(data: dict[str, Any]) -> dict[str, Any]:
 
 def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:
     """Return coupon book flash offer attributes."""
-    offers = _coupon_book_flash_offer_list(data)
-    if offers is None:
+    flash_offers = _coupon_book_flash_offer_list(data)
+    personal_offers = _coupon_book_personal_offer_list(data)
+    if flash_offers is None and personal_offers is None:
         return _without_none(
             {
                 "coupon_book_error": data.get("coupon_book_offers_error"),
             }
         )
 
+    flash_offers = flash_offers or []
+    personal_offers = personal_offers or []
     return _without_none(
         {
             "coupon_book_total": _int_or_none(
@@ -341,17 +357,27 @@ def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:
             "coupon_book_total_points": _int_or_none(
                 _nested(data, "coupon_book_offers", "totalPoints")
             ),
-            "flash_total": len(offers),
-            "flash_activated": sum(1 for offer in offers if offer.get("active") is True),
-            "flash_available": sum(1 for offer in offers if offer.get("active") is False),
-            "flash_offer_list": [_flash_offer_detail(offer) for offer in offers],
+            "coupon_book_personal_total": len(personal_offers),
+            "coupon_book_personal_activated": sum(
+                1 for offer in personal_offers if offer.get("active") is True
+            ),
+            "coupon_book_personal_available": sum(
+                1 for offer in personal_offers if offer.get("active") is False
+            ),
+            "coupon_book_personal_offer_list": [
+                _coupon_book_offer_detail(offer) for offer in personal_offers
+            ],
+            "flash_total": len(flash_offers),
+            "flash_activated": sum(1 for offer in flash_offers if offer.get("active") is True),
+            "flash_available": sum(1 for offer in flash_offers if offer.get("active") is False),
+            "flash_offer_list": [_coupon_book_offer_detail(offer) for offer in flash_offers],
             "coupon_book_error": data.get("coupon_book_offers_error"),
         }
     )
 
 
-def _flash_offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
-    """Return a structured coupon book flash offer detail."""
+def _coupon_book_offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
+    """Return a structured coupon book offer detail."""
     return _without_none(
         {
             **_offer_detail(offer),
@@ -390,10 +416,184 @@ def _coupon_book_flash_offer_list(data: dict[str, Any]) -> list[dict[str, Any]] 
     return [offer for offer in offers if isinstance(offer, dict)]
 
 
+def _coupon_book_personal_offer_list(data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return the detailed coupon book personal offer list when available."""
+    offers = _nested(data, "coupon_book_offers", "personalOffers")
+    if not isinstance(offers, list):
+        return None
+    return [offer for offer in offers if isinstance(offer, dict)]
+
+
+def _burnable_offer_product_count(data: dict[str, Any]) -> int | None:
+    """Return the number of burnable offer products with discount details."""
+    products = _burnable_offer_discount_product_list(data)
+    if products is None:
+        return None
+    return len(products)
+
+
+def _burnable_offer_discount_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    """Return burnable offer products and their discount values."""
+    products = _burnable_offer_discount_product_list(data)
+    offers = _burnable_offer_sources(data)
+    if products is None:
+        return _without_none(
+            {
+                "error": data.get("burnable_offers_error")
+                or data.get("burnable_offer_ranges_error"),
+            }
+        )
+
+    return _without_none(
+        {
+            "offer_total": len(offers) if offers is not None else None,
+            "product_total": len(products),
+            "applicable_product_total": sum(
+                1 for product in products if product.get("can_apply") is True
+            ),
+            "product_discount_list": products,
+            "error": data.get("burnable_offers_error")
+            or data.get("burnable_offer_ranges_error"),
+        }
+    )
+
+
+def _burnable_offer_discount_product_list(
+    data: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Return burnable offer product rows with point and euro discount values."""
+    offers = _burnable_offer_sources(data)
+    if offers is None:
+        return None
+
+    products: list[dict[str, Any]] = []
+    for offer in offers:
+        if offer.get("error"):
+            continue
+        offer_products = offer.get("products")
+        if not isinstance(offer_products, list):
+            continue
+        discount_points = _int_or_none(offer.get("priceToBurn"))
+        for product in offer_products:
+            if not isinstance(product, dict):
+                continue
+            price = product.get("price") if isinstance(product.get("price"), dict) else {}
+            stock = product.get("stock") if isinstance(product.get("stock"), dict) else {}
+            products.append(
+                _without_none(
+                    {
+                        "offer_id": _clean_label(offer.get("id")),
+                        "offer": _clean_label(offer.get("name")),
+                        "offer_active": offer.get("active"),
+                        "can_apply": _burnable_offer_can_apply(offer, product),
+                        "discount_points": discount_points,
+                        "discount_value": _points_to_euro(discount_points),
+                        "days_remaining": _int_or_none(offer.get("daysRemaining")),
+                        "max_uses": _int_or_none(offer.get("maxUses")),
+                        "available_redemptions": _int_or_none(
+                            offer.get("availableRedemptions")
+                        ),
+                        "registered_redemptions": _int_or_none(
+                            offer.get("registeredRedemptions")
+                        ),
+                        "product_code": _clean_label(product.get("code")),
+                        "product": _clean_label(product.get("name")),
+                        "brand": _product_brand(product),
+                        "product_available": product.get("available"),
+                        "in_stock": stock.get("inStock"),
+                        "available_from_date": _clean_label(stock.get("availableFromDate")),
+                        "current_price": _clean_label(price.get("formattedValue")),
+                        "current_price_value": _float_or_none(price.get("value")),
+                        "original_price": _clean_label(price.get("wasPrice")),
+                        "discounted_price": _clean_label(
+                            price.get("discountedPriceFormatted")
+                        ),
+                        "unit_price": _clean_label(price.get("unitPriceFormatted")),
+                        "currency": _clean_label(price.get("currencyIso")),
+                        "url": _clean_label(product.get("url")),
+                    }
+                )
+            )
+    return products
+
+
+def _burnable_offer_sources(data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return burnable offers, preferring detailed range responses when available."""
+    offer_list = _nested(data, "burnable_offers", "burnableOfferList")
+    range_list = data.get("burnable_offer_ranges")
+    if not isinstance(offer_list, list) and not isinstance(range_list, list):
+        return None
+
+    offers_by_id: dict[str, dict[str, Any]] = {}
+    for offer in offer_list or []:
+        if isinstance(offer, dict):
+            offer_id = _clean_label(offer.get("id"))
+            if offer_id:
+                offers_by_id[offer_id] = offer
+    for offer in range_list or []:
+        if isinstance(offer, dict):
+            offer_id = _clean_label(offer.get("id"))
+            if offer_id:
+                offers_by_id[offer_id] = offer
+    return list(offers_by_id.values())
+
+
+def _burnable_offer_can_apply(offer: dict[str, Any], product: dict[str, Any]) -> bool:
+    """Return whether a burnable offer can currently be applied to a product."""
+    stock = product.get("stock") if isinstance(product.get("stock"), dict) else {}
+    return (
+        offer.get("activationAllowed") is True
+        and offer.get("enoughPointsToBurn") is True
+        and offer.get("productAvailable") is not False
+        and product.get("available") is not False
+        and (
+            stock.get("inStock") is True
+            or stock.get("inStockBeforeMaxAdvanceOrderingDate") is True
+            or not stock
+        )
+    )
+
+
+def _product_brand(product: dict[str, Any]) -> str | None:
+    """Return a product brand label from manufacturer fields."""
+    return ", ".join(
+        value
+        for value in (
+            _clean_label(product.get("manufacturerName")),
+            _clean_label(product.get("manufacturerSubBrandName")),
+        )
+        if value
+    ) or None
+
+
+def _offer_available_until(offer: dict[str, Any]) -> str | None:
+    """Return the best available end date or validity label for an offer."""
+    for key in ("redemptionEndDate", "activationEndDate", "validity"):
+        value = _clean_label(offer.get(key))
+        if value:
+            return value
+    return None
+
+
+def _points_to_euro(points: int | None) -> float | None:
+    """Return the euro value of Delhaize points."""
+    if points is None:
+        return None
+    return round(points * 0.01, 2)
+
+
 def _int_or_none(value: Any) -> int | None:
     """Return a value as int when possible."""
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    """Return a value as float when possible."""
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 

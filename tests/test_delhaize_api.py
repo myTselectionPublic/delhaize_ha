@@ -636,6 +636,66 @@ def test_inactive_offer_detection_includes_flash_e_deals() -> None:
     assert DelhaizeApi._has_inactive_offers(summary)  # noqa: SLF001
 
 
+def test_burnable_offer_ranges_fetches_only_range_offers() -> None:
+    """BurnableOfferRange is used to expand range offers into products."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse(
+                    {
+                        "data": {
+                            "customerBurnOffersList": {
+                                "burnableOfferList": [
+                                    {"id": "range-1", "range": True, "name": "Range"},
+                                    {"id": "single-1", "range": False, "name": "Single"},
+                                ]
+                            }
+                        }
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "customerBurnOfferRangeDetailed": {
+                                "id": "range-1",
+                                "name": "Range",
+                                "range": True,
+                                "priceToBurn": 150,
+                                "products": [{"code": "123", "name": "Product"}],
+                            }
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(session, cookie_header="grocery-roatc=access-token")
+
+        offers = await api.get_burnable_offers_list()
+        ranges = await api.get_burnable_offer_ranges(offers["burnableOfferList"])
+
+        assert ranges == [
+            {
+                "id": "range-1",
+                "name": "Range",
+                "range": True,
+                "priceToBurn": 150,
+                "products": [{"code": "123", "name": "Product"}],
+            }
+        ]
+        assert [request["operation"] for request in session.requests] == [
+            "BurnOffersList",
+            "BurnableOfferRange",
+        ]
+        assert session.requests[0]["payload"]["variables"] == {"lang": "nl"}
+        assert session.requests[1]["payload"]["variables"] == {
+            "offerId": "range-1",
+            "lang": "nl",
+        }
+
+    asyncio.run(run_test())
+
+
 class FakeSession:
     """Minimal aiohttp-like session for GraphQL tests."""
 

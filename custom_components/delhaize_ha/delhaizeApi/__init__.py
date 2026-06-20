@@ -230,6 +230,135 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       redemptionStartDate
       redemptionEndDate
     }
+    personalOffers {
+      id
+      name
+      active
+      points
+      promotion
+      promotionId
+      promotionType
+      basketPromo
+      moreDetails
+      activationStartDate
+      activationEndDate
+      redemptionStartDate
+      redemptionEndDate
+    }
+  }
+}
+"""
+
+BURNABLE_OFFERS_LIST_QUERY = """
+query BurnOffersList($lang: String!) {
+  customerBurnOffersList(lang: $lang) {
+    burnableOfferList {
+      ...BurnableOfferDetails
+    }
+  }
+}
+
+fragment BurnableOfferDetails on BurnableOffer {
+  id
+  name
+  picture
+  offerRedeemed
+  active
+  range
+  priceToBurn
+  deactivationAllowed
+  enoughPointsToBurn
+  productRangeSize
+  missingPointsToBurn
+  daysRemaining
+  maxUses
+  productAvailable
+  activationAllowed
+  availableRedemptions
+  registeredRedemptions
+  onlineOffer
+  products {
+    ...BurnableProductDetails
+  }
+}
+
+fragment BurnableProductDetails on Product {
+  code
+  name
+  manufacturerName
+  manufacturerSubBrandName
+  available
+  url
+  price {
+    currencyIso
+    currencySymbol
+    formattedValue
+    discountedPriceFormatted
+    discountedUnitPriceFormatted
+    unitPriceFormatted
+    value
+    wasPrice
+  }
+  stock {
+    inStock
+    inStockBeforeMaxAdvanceOrderingDate
+    availableFromDate
+  }
+}
+"""
+
+BURNABLE_OFFER_RANGE_QUERY = """
+query BurnableOfferRange($offerId: String!, $lang: String!) {
+  customerBurnOfferRangeDetailed(offerId: $offerId, lang: $lang) {
+    ...BurnableOfferDetails
+  }
+}
+
+fragment BurnableOfferDetails on BurnableOffer {
+  id
+  name
+  picture
+  offerRedeemed
+  active
+  range
+  priceToBurn
+  deactivationAllowed
+  enoughPointsToBurn
+  productRangeSize
+  missingPointsToBurn
+  daysRemaining
+  maxUses
+  productAvailable
+  activationAllowed
+  availableRedemptions
+  registeredRedemptions
+  onlineOffer
+  products {
+    ...BurnableProductDetails
+  }
+}
+
+fragment BurnableProductDetails on Product {
+  code
+  name
+  manufacturerName
+  manufacturerSubBrandName
+  available
+  url
+  price {
+    currencyIso
+    currencySymbol
+    formattedValue
+    discountedPriceFormatted
+    discountedUnitPriceFormatted
+    unitPriceFormatted
+    value
+    wasPrice
+  }
+  stock {
+    inStock
+    inStockBeforeMaxAdvanceOrderingDate
+    availableFromDate
   }
 }
 """
@@ -587,6 +716,61 @@ class DelhaizeApi:
         )
         return data.get("couponBookOffers") or {}
 
+    async def get_burnable_offers_list(self, *, lang: str | None = None) -> dict[str, Any]:
+        """Return burnable SuperPlus offers."""
+        data = await self.graphql(
+            "BurnOffersList",
+            BURNABLE_OFFERS_LIST_QUERY,
+            variables={"lang": lang or self.language},
+        )
+        return data.get("customerBurnOffersList") or {}
+
+    async def get_burnable_offer_range(
+        self,
+        offer_id: str,
+        *,
+        lang: str | None = None,
+    ) -> dict[str, Any]:
+        """Return detailed product range for one burnable offer."""
+        data = await self.graphql(
+            "BurnableOfferRange",
+            BURNABLE_OFFER_RANGE_QUERY,
+            variables={"offerId": offer_id, "lang": lang or self.language},
+        )
+        return data.get("customerBurnOfferRangeDetailed") or {}
+
+    async def get_burnable_offer_ranges(
+        self,
+        offers: list[dict[str, Any]] | None = None,
+        *,
+        lang: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return detailed ranges for burnable offers that have product ranges."""
+        if offers is None:
+            offers = (await self.get_burnable_offers_list()).get("burnableOfferList")
+        if not isinstance(offers, list):
+            return []
+
+        ranges: list[dict[str, Any]] = []
+        for offer in offers:
+            if not isinstance(offer, dict) or offer.get("range") is not True:
+                continue
+            offer_id = offer.get("id")
+            if offer_id is None:
+                continue
+            try:
+                ranges.append(
+                    await self.get_burnable_offer_range(str(offer_id), lang=lang)
+                )
+            except DelhaizeApiError as err:
+                ranges.append({"id": str(offer_id), "error": str(err)})
+                _LOGGER.debug(
+                    "Could not fetch Delhaize burnable offer range %s: %s",
+                    offer_id,
+                    err,
+                )
+        return ranges
+
     async def _activate_all_personal_offers(self) -> Any:
         """Activate all available personal offers."""
         data = await self.graphql(
@@ -655,6 +839,8 @@ class DelhaizeApi:
             "personal_offers_count": {},
             "personal_offers": {},
             "coupon_book_offers": {},
+            "burnable_offers": {},
+            "burnable_offer_ranges": [],
         }
 
         summary["loyalty"] = await self.get_loyalty_details()
@@ -671,6 +857,21 @@ class DelhaizeApi:
         except DelhaizeApiError as err:
             summary["coupon_book_offers_error"] = str(err)
             _LOGGER.debug("Could not fetch Delhaize coupon book offers: %s", err)
+
+        try:
+            summary["burnable_offers"] = await self.get_burnable_offers_list()
+        except DelhaizeApiError as err:
+            summary["burnable_offers_error"] = str(err)
+            _LOGGER.debug("Could not fetch Delhaize burnable offers: %s", err)
+        else:
+            try:
+                burnable_offer_list = summary["burnable_offers"].get("burnableOfferList")
+                summary["burnable_offer_ranges"] = await self.get_burnable_offer_ranges(
+                    burnable_offer_list
+                )
+            except DelhaizeApiError as err:
+                summary["burnable_offer_ranges_error"] = str(err)
+                _LOGGER.debug("Could not fetch Delhaize burnable offer ranges: %s", err)
 
         if auto_activate and self._has_inactive_offers(summary):
             inactive_offers = self._inactive_personal_offers(summary)

@@ -103,7 +103,7 @@ content: |
   | Promotion | Type | Points |
   |---|---:|---:|
   {% for offer in personal %}
-  | {{ offer.description }} | {{ offer.promotion_type or '-' }} | {{ offer.points or '-' }} |
+  | {{ offer.get('description', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ offer.get('points', '-') }} |
   {% endfor %}
   {% else %}
   No personal e-Deals found.
@@ -117,7 +117,7 @@ content: |
   | Promotion | Type | Status | Points |
   |---|---:|---:|---:|
   {% for offer in flash %}
-  | {{ offer.description }} | {{ offer.promotion_type or '-' }} | {{ 'Active' if offer.active else 'Available' }} | {{ offer.points or '-' }} |
+  | {{ offer.get('description', '-') }} | {{ offer.get('promotion_type', '-') }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{ offer.get('points', '-') }} |
   {% endfor %}
   {% else %}
   No flash e-Deals found.

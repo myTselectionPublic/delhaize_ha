@@ -111,7 +111,6 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                         ]
                     }
                 ),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
@@ -142,13 +141,15 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
         assert customer["uid"] == "customer-1"
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
-        assert_get_subscriptions_request(session.requests[2])
-        assert_refresh_customer_token_request(session.requests[3])
+        assert_browser_context_requests(session.requests, 1)
+        assert_get_subscriptions_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -161,7 +162,6 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
@@ -191,14 +191,16 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_get_subscriptions_request(session.requests[2])
-        assert_refresh_customer_token_request(session.requests[3])
-        assert "grocery-roatc=new-access-token" in session.requests[4]["headers"]["Cookie"]
+        assert_browser_context_requests(session.requests, 1)
+        assert_get_subscriptions_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
+        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -211,7 +213,6 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
@@ -243,12 +244,14 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert "grocery-roatc=new-access-token" in session.requests[4]["headers"]["Cookie"]
+        assert_browser_context_requests(session.requests, 1)
+        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -261,7 +264,6 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
@@ -295,16 +297,18 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_refresh_customer_token_request(session.requests[3])
+        assert_browser_context_requests(session.requests, 1)
         assert_refresh_customer_token_request(session.requests[4])
-        assert "_abck=new-abck" in session.requests[4]["headers"]["Cookie"]
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[5])
+        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -357,7 +361,6 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
                         ]
                     }
                 ),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
@@ -388,14 +391,16 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
         assert customer["uid"] == "customer-1"
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
-        assert_get_subscriptions_request(session.requests[2])
-        assert_refresh_customer_token_request(session.requests[3])
-        assert "grocery-roatc=new-access-token" in session.requests[4]["headers"]["Cookie"]
+        assert_browser_context_requests(session.requests, 1)
+        assert_get_subscriptions_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
+        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -408,7 +413,6 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
             ]
@@ -427,7 +431,8 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
         ]
@@ -442,7 +447,6 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
@@ -469,15 +473,17 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
         ]
-        assert_get_subscriptions_request(session.requests[2])
-        assert_refresh_customer_token_request(session.requests[3])
+        assert_browser_context_requests(session.requests, 1)
+        assert_get_subscriptions_request(session.requests[3])
         assert_refresh_customer_token_request(session.requests[4])
-        assert "_abck=new-abck" in session.requests[4]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[5])
+        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
         assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -517,13 +523,16 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "DeviceId",
             "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert "deviceSessionId=device-1" in session.requests[2]["headers"]["Cookie"]
-        assert "deviceSessionId=device-1" in session.requests[3]["headers"]["Cookie"]
+        assert_browser_context_requests(session.requests, 1)
+        assert "deviceSessionId=device-1" in session.requests[4]["headers"]["Cookie"]
+        assert "deviceSessionId=device-1" in session.requests[5]["headers"]["Cookie"]
         assert "deviceSessionId=device-1" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -536,7 +545,6 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse({"data": {}}, cookies={"_abck": "new-abck"}),
             ]
@@ -561,7 +569,8 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "DeviceId",
+            "DelhaizeHome",
+            "DigitalContentHome",
             "getSubscriptions",
             "RefreshCustomerToken",
         ]
@@ -713,37 +722,43 @@ class FakeSession:
         timeout: int,
     ) -> FakeRequest:
         """Return the next fake response."""
+        operation = json.get("operationName", "DigitalContentHome")
         self.requests.append(
             {
                 "url": url,
                 "method": "POST",
-                "operation": json["operationName"],
+                "operation": operation,
                 "payload": json,
                 "headers": headers,
                 "timeout": timeout,
             }
         )
+        if operation == "DigitalContentHome":
+            return FakeRequest(FakeResponse([]))
         return FakeRequest(self._responses.pop(0))
 
     def get(
         self,
         url: str,
         *,
-        params: dict[str, str],
+        params: dict[str, str] | None = None,
         headers: dict[str, str],
         timeout: int,
     ) -> FakeRequest:
         """Return the next fake response for a GraphQL GET request."""
+        operation = params["operationName"] if params else "DelhaizeHome"
         self.requests.append(
             {
                 "url": url,
                 "method": "GET",
-                "operation": params["operationName"],
-                "params": params,
+                "operation": operation,
+                "params": params or {},
                 "headers": headers,
                 "timeout": timeout,
             }
         )
+        if operation == "DelhaizeHome":
+            return FakeRequest(FakeResponse({}))
         return FakeRequest(self._responses.pop(0))
 
 
@@ -759,6 +774,36 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
         "operationName": "RefreshCustomerToken",
         "variables": {},
         "extensions": REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
+    }
+
+
+def assert_browser_context_requests(
+    requests: list[dict[str, Any]],
+    start: int,
+) -> None:
+    """Assert the pre-GraphQL browser context warm-up calls."""
+    home_request = requests[start]
+    assert home_request["operation"] == "DelhaizeHome"
+    assert home_request["method"] == "GET"
+    assert home_request["url"] == "https://www.delhaize.be/"
+    assert home_request["headers"]["Sec-Fetch-Mode"] == "navigate"
+    assert "Content-Type" not in home_request["headers"]
+
+    digital_request = requests[start + 1]
+    assert digital_request["operation"] == "DigitalContentHome"
+    assert digital_request["method"] == "POST"
+    assert digital_request["url"] == "https://digitalcontent1.delhaize.be/json"
+    assert digital_request["headers"]["Origin"] == "https://www.delhaize.be"
+    assert digital_request["headers"]["Sec-Fetch-Site"] == "same-site"
+    assert digital_request["payload"]["parameters"] == {
+        "pt": ["home"],
+        "ln": ["nl"],
+        "tc": ["false"],
+        "te": ["false"],
+        "tl": ["none"],
+        "um": ["no_consent"],
+        "cu": ["b2c"],
+        "pp": ["_"],
     }
 
 
@@ -816,7 +861,7 @@ class FakeResponse:
 
     def __init__(
         self,
-        payload: dict[str, Any],
+        payload: Any,
         *,
         status: int = 200,
         cookies: dict[str, str] | None = None,

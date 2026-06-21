@@ -17,6 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
+DIGITAL_CONTENT_URL = "https://digitalcontent1.delhaize.be/json"
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -141,6 +142,13 @@ GET_SUBSCRIPTIONS_EXTENSIONS = {
         "sha256Hash": GET_SUBSCRIPTIONS_HASH,
     }
 }
+
+DIGITAL_CONTENT_HOME_SLOTS = [
+    {"slotname": "delhaize-be_home-flex", "parameters": {"ps": ["top"]}},
+    {"slotname": "delhaize-be_home_2-flex", "parameters": {"ps": ["top"]}},
+    {"slotname": "delhaize-be_home_3-flex", "parameters": {"ps": ["top"]}},
+    {"slotname": "delhaize-be_home_4-flex", "parameters": {"ps": ["top"]}},
+]
 
 CURRENT_CUSTOMER_QUERY = """
 query CurrentCustomer($mode: String!) {
@@ -625,12 +633,17 @@ class DelhaizeApi:
 
     async def _prepare_customer_refresh_context(self) -> None:
         """Mimic the browser calls that establish customer refresh context."""
-        if self._has_customer_refresh_cookie():
+        await self._warm_browser_context()
+
+        if (
+            DEVICE_SESSION_COOKIE_NAME not in self._cookies
+            and self._has_customer_refresh_cookie()
+        ):
             try:
                 await self.get_device_id(allow_token_refresh=False)
             except DelhaizeApiError as err:
                 _LOGGER.debug(
-                    "Could not refresh Delhaize device session before auth refresh: error=%s errors=%s cookie_names=%s",
+                    "Could not initialize Delhaize device session before auth refresh: error=%s errors=%s cookie_names=%s",
                     err,
                     summarize_graphql_errors(err.errors),
                     self._cookie_names(),
@@ -651,6 +664,110 @@ class DelhaizeApi:
                 summarize_graphql_errors(err.errors),
                 self._cookie_names(),
             )
+
+    async def _warm_browser_context(self) -> None:
+        """Warm Delhaize website cookies before authenticated GraphQL refresh."""
+        await self._request_context_page()
+        await self._request_digital_content_home()
+
+    async def _request_context_page(self) -> None:
+        """Request the Delhaize home page to refresh website context cookies."""
+        headers = self._browser_headers(
+            accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            include_origin=False,
+            include_content_type=False,
+            referer=BASE_URL,
+            sec_fetch_mode="navigate",
+            sec_fetch_dest="document",
+            sec_fetch_site="none",
+        )
+        await self._request_cookie_context(
+            "DelhaizeHome",
+            "GET",
+            f"{BASE_URL}/",
+            headers=headers,
+        )
+
+    async def _request_digital_content_home(self) -> None:
+        """Request home digital content like the browser does before GraphQL."""
+        headers = self._browser_headers(
+            accept="*/*",
+            include_origin=True,
+            include_content_type=True,
+            referer=f"{BASE_URL}/{self.language}",
+            sec_fetch_mode="cors",
+            sec_fetch_dest="empty",
+            sec_fetch_site="same-site",
+        )
+        await self._request_cookie_context(
+            "DigitalContentHome",
+            "POST",
+            DIGITAL_CONTENT_URL,
+            headers=headers,
+            json_payload={
+                "slots": DIGITAL_CONTENT_HOME_SLOTS,
+                "parameters": {
+                    "pt": ["home"],
+                    "ln": [self.language],
+                    "tc": ["false"],
+                    "te": ["false"],
+                    "tl": ["none"],
+                    "um": ["no_consent"],
+                    "cu": ["b2c"],
+                    "pp": ["_"],
+                },
+            },
+        )
+
+    async def _request_cookie_context(
+        self,
+        operation_name: str,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json_payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Execute a non-GraphQL browser context request and store cookies."""
+        before_cookies = dict(self._cookies)
+        _LOGGER.debug(
+            "Sending Delhaize context request: operation=%s method=%s cookie_present=%s",
+            operation_name,
+            method,
+            "Cookie" in headers,
+        )
+        try:
+            if method == "GET":
+                request = self.websession.get(url, headers=headers, timeout=30)
+            else:
+                request = self.websession.post(
+                    url,
+                    json=json_payload or {},
+                    headers=headers,
+                    timeout=30,
+                )
+
+            async with request as response:
+                response_text = await response.text()
+                response_cookies = _response_cookie_items(response)
+                self._store_response_cookies(response_cookies)
+                status = response.status
+        except (ClientError, TimeoutError, CancelledError) as err:
+            _LOGGER.debug(
+                "Delhaize context request failed: operation=%s error=%r",
+                operation_name,
+                err,
+            )
+            return
+
+        _LOGGER.debug(
+            "Received Delhaize context response: operation=%s status=%s bytes=%s set_cookies=%s cookie_changes=%s",
+            operation_name,
+            status,
+            len(response_text),
+            sorted(response_cookies),
+            _cookie_change_summary(before_cookies, self._cookies),
+        )
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -1088,6 +1205,41 @@ class DelhaizeApi:
             headers["Cookie"] = cookie_header
         if extra_headers:
             headers.update(extra_headers)
+        return headers
+
+    def _browser_headers(
+        self,
+        *,
+        accept: str,
+        include_origin: bool,
+        include_content_type: bool,
+        referer: str | None,
+        sec_fetch_mode: str,
+        sec_fetch_dest: str,
+        sec_fetch_site: str,
+    ) -> dict[str, str]:
+        """Build browser-like headers for non-GraphQL context requests."""
+        headers = {
+            "Accept": accept,
+            "Accept-Language": _accept_language(self.language),
+            "Sec-Fetch-Dest": sec_fetch_dest,
+            "Sec-Fetch-Mode": sec_fetch_mode,
+            "Sec-Fetch-Site": sec_fetch_site,
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0 Safari/537.36"
+            ),
+        }
+        if include_origin:
+            headers["Origin"] = BASE_URL
+        if include_content_type:
+            headers["Content-Type"] = "application/json"
+        if referer:
+            headers["Referer"] = referer
+        cookie_header = self.get_cookie_header()
+        if cookie_header:
+            headers["Cookie"] = cookie_header
         return headers
 
     def _referer(self, operation_name: str) -> str:

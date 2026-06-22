@@ -144,12 +144,14 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
         assert_browser_context_requests(session.requests, 1)
         assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[5])
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -194,13 +196,15 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
         assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_blueconic_context_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[5])
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -247,11 +251,12 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -300,15 +305,17 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[4])
         assert_refresh_customer_token_request(session.requests[5])
-        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[6])
+        assert "_abck=new-abck" in session.requests[6]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[7]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -394,13 +401,15 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
         assert_browser_context_requests(session.requests, 1)
         assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_blueconic_context_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[5])
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -434,6 +443,7 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
         ]
 
@@ -476,14 +486,16 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
         ]
         assert_browser_context_requests(session.requests, 1)
         assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[4])
         assert_refresh_customer_token_request(session.requests[5])
-        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[6])
+        assert "_abck=new-abck" in session.requests[6]["headers"]["Cookie"]
         assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -527,12 +539,13 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
             "DigitalContentHome",
             "DeviceId",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
         assert "deviceSessionId=device-1" in session.requests[4]["headers"]["Cookie"]
-        assert "deviceSessionId=device-1" in session.requests[5]["headers"]["Cookie"]
+        assert "deviceSessionId=device-1" in session.requests[6]["headers"]["Cookie"]
         assert "deviceSessionId=device-1" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -572,6 +585,7 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
         ]
 
@@ -722,7 +736,10 @@ class FakeSession:
         timeout: int,
     ) -> FakeRequest:
         """Return the next fake response."""
-        operation = json.get("operationName", "DigitalContentHome")
+        if isinstance(json, list):
+            operation = "BlueConicContext"
+        else:
+            operation = json.get("operationName", "DigitalContentHome")
         self.requests.append(
             {
                 "url": url,
@@ -733,7 +750,7 @@ class FakeSession:
                 "timeout": timeout,
             }
         )
-        if operation == "DigitalContentHome":
+        if operation in {"BlueConicContext", "DigitalContentHome"}:
             return FakeRequest(FakeResponse([]))
         return FakeRequest(self._responses.pop(0))
 
@@ -805,6 +822,23 @@ def assert_browser_context_requests(
         "cu": ["b2c"],
         "pp": ["_"],
     }
+
+
+def assert_blueconic_context_request(request: dict[str, Any]) -> None:
+    """Assert the BlueConic profile/pageview context call."""
+    assert request["operation"] == "BlueConicContext"
+    assert request["method"] == "POST"
+    assert request["url"].startswith("https://bc.delhaize.be/DG/DEFAULT/rest/rpc/101?")
+    assert "referer=https%3A%2F%2Fwww.delhaize.be%2F" in request["url"]
+    assert request["headers"]["Origin"] == "https://www.delhaize.be"
+    assert request["headers"]["Referer"] == "https://www.delhaize.be/"
+    assert request["headers"]["Sec-Fetch-Site"] == "same-site"
+    assert [item["method"] for item in request["payload"]] == [
+        "getProfile",
+        "setProperties",
+        "addProperties",
+        "createEvent",
+    ]
 
 
 def assert_get_subscriptions_request(request: dict[str, Any]) -> None:

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from asyncio import CancelledError, TimeoutError
+from datetime import datetime
 from http.cookies import CookieError, SimpleCookie
 import json
 import logging
+import time
 from typing import Any
+from urllib.parse import urlencode
 
 from aiohttp import ClientResponse, ClientSession
 from aiohttp.client_exceptions import ClientError
@@ -18,6 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
 DIGITAL_CONTENT_URL = "https://digitalcontent1.delhaize.be/json"
+BLUECONIC_URL = "https://bc.delhaize.be/DG/DEFAULT/rest/rpc/101"
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -665,6 +669,8 @@ class DelhaizeApi:
                 self._cookie_names(),
             )
 
+        await self._request_blueconic_context()
+
     async def _warm_browser_context(self) -> None:
         """Warm Delhaize website cookies before authenticated GraphQL refresh."""
         await self._request_context_page()
@@ -719,6 +725,85 @@ class DelhaizeApi:
             },
         )
 
+    async def _request_blueconic_context(self) -> None:
+        """Request BlueConic profile/pageview context before auth refresh."""
+        now = datetime.now().astimezone()
+        timestamp_ms = int(time.time() * 1000)
+        base_id = str(timestamp_ms)
+        params = {
+            "referer": f"{BASE_URL}/",
+            "bcsessionid": "",
+            "bctempid": "",
+            "overruleReferrer": "",
+            "time": now.isoformat(timespec="seconds"),
+            "ts": str(timestamp_ms),
+        }
+        payload = [
+            {"method": "getProfile", "params": "null", "id": base_id},
+            {
+                "method": "setProperties",
+                "params": json.dumps(
+                    {
+                        "properties": {
+                            "websiteLang": [self.language],
+                            "language": ["en"],
+                            "currentscreenwidth": [1920],
+                            "currentscreenheight": [1080],
+                            "currentresolution": ["1920x1080"],
+                            "entrypage": [f"{BASE_URL}/"],
+                        },
+                        "sources": {
+                            "listener_website_language_delhaize": ["websiteLang"],
+                            "listenerinteractiontype": [
+                                "language",
+                                "currentscreenwidth",
+                                "currentscreenheight",
+                                "currentresolution",
+                                "entrypage",
+                            ],
+                        },
+                    },
+                    separators=(",", ":"),
+                ),
+                "id": str(timestamp_ms + 1),
+            },
+            {
+                "method": "addProperties",
+                "params": json.dumps(
+                    {
+                        "properties": {"resolution": ["1920x1080"]},
+                        "sources": {"listenerinteractiontype": ["resolution"]},
+                    },
+                    separators=(",", ":"),
+                ),
+                "id": str(timestamp_ms + 2),
+            },
+            {
+                "method": "createEvent",
+                "params": json.dumps(
+                    {"type": ["PAGEVIEW"], "referrer": [""], "profile": []},
+                    separators=(",", ":"),
+                ),
+                "id": str(timestamp_ms + 3),
+            },
+        ]
+        headers = self._browser_headers(
+            accept="*/*",
+            include_origin=True,
+            include_content_type=True,
+            referer=f"{BASE_URL}/",
+            sec_fetch_mode="cors",
+            sec_fetch_dest="empty",
+            sec_fetch_site="same-site",
+        )
+        await self._request_cookie_context(
+            "BlueConicContext",
+            "POST",
+            f"{BLUECONIC_URL}?{urlencode(params)}",
+            headers=headers,
+            json_payload=payload,
+        )
+
     async def _request_cookie_context(
         self,
         operation_name: str,
@@ -726,7 +811,7 @@ class DelhaizeApi:
         url: str,
         *,
         headers: dict[str, str],
-        json_payload: dict[str, Any] | None = None,
+        json_payload: Any | None = None,
     ) -> None:
         """Execute a non-GraphQL browser context request and store cookies."""
         before_cookies = dict(self._cookies)

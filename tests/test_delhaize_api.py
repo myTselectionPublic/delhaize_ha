@@ -786,7 +786,8 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     assert request["headers"]["X-APOLLO-OPERATION-NAME"] == "RefreshCustomerToken"
     assert request["headers"]["X-APOLLO-OPERATION-ID"] == REFRESH_CUSTOMER_TOKEN_HASH
     assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
-    assert request["headers"]["Referer"] == "https://www.delhaize.be/nl/my-account/dashboard"
+    assert request["headers"]["Referer"] == "https://www.delhaize.be/"
+    assert request["headers"]["Sec-CH-UA-Platform"] == '"Windows"'
     assert request["payload"] == {
         "operationName": "RefreshCustomerToken",
         "variables": {},
@@ -804,6 +805,7 @@ def assert_browser_context_requests(
     assert home_request["method"] == "GET"
     assert home_request["url"] == "https://www.delhaize.be/"
     assert home_request["headers"]["Sec-Fetch-Mode"] == "navigate"
+    assert "Referer" not in home_request["headers"]
     assert "Content-Type" not in home_request["headers"]
 
     digital_request = requests[start + 1]

@@ -22,6 +22,16 @@ TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
 DIGITAL_CONTENT_URL = "https://digitalcontent1.delhaize.be/json"
 BLUECONIC_URL = "https://bc.delhaize.be/DG/DEFAULT/rest/rpc/101"
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0 Safari/537.36"
+)
+BROWSER_CLIENT_HINT_HEADERS = {
+    "Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-CH-UA-Mobile": "?0",
+    "Sec-CH-UA-Platform": '"Windows"',
+}
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -588,6 +598,7 @@ class DelhaizeApi:
                     "RefreshCustomerToken",
                     extensions=REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
                     extra_headers={
+                        "Referer": f"{BASE_URL}/",
                         "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
                         "x-do-refresh-token": "true",
                     },
@@ -682,7 +693,7 @@ class DelhaizeApi:
             accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             include_origin=False,
             include_content_type=False,
-            referer=BASE_URL,
+            referer=None,
             sec_fetch_mode="navigate",
             sec_fetch_dest="document",
             sec_fetch_site="none",
@@ -1275,14 +1286,11 @@ class DelhaizeApi:
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
-            ),
+            "User-Agent": BROWSER_USER_AGENT,
             "X-APOLLO-OPERATION-NAME": operation_name,
             "x-default-gql-refresh-token-disabled": "true",
         }
+        headers.update(BROWSER_CLIENT_HINT_HEADERS)
         if include_content_type:
             headers["Content-Type"] = "application/json"
         cookie_header = self.get_cookie_header()
@@ -1310,12 +1318,9 @@ class DelhaizeApi:
             "Sec-Fetch-Dest": sec_fetch_dest,
             "Sec-Fetch-Mode": sec_fetch_mode,
             "Sec-Fetch-Site": sec_fetch_site,
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
-            ),
+            "User-Agent": BROWSER_USER_AGENT,
         }
+        headers.update(BROWSER_CLIENT_HINT_HEADERS)
         if include_origin:
             headers["Origin"] = BASE_URL
         if include_content_type:

@@ -7,6 +7,8 @@ from datetime import datetime
 from http.cookies import CookieError, SimpleCookie
 import json
 import logging
+import random
+import re
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -21,7 +23,11 @@ _LOGGER = logging.getLogger(__name__)
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
 DIGITAL_CONTENT_URL = "https://digitalcontent1.delhaize.be/json"
-BLUECONIC_URL = "https://bc.delhaize.be/DG/DEFAULT/rest/rpc/101"
+BLUECONIC_SCRIPT_URL = "https://bc.delhaize.be/script.js"
+BLUECONIC_RPC_BASE_URL = "https://bc.delhaize.be/DG/DEFAULT/rest/rpc"
+BLUECONIC_DEFAULT_RPC_ID = "101"
+BLUECONIC_RPC_RANDOM_MIN = 101
+BLUECONIC_RPC_RANDOM_MAX = 1100
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -443,6 +449,7 @@ class DelhaizeApi:
         self.websession = websession
         self.language = language
         self._cookies: dict[str, str] = {}
+        self._blueconic_rpc_id = BLUECONIC_DEFAULT_RPC_ID
         if cookie_header:
             self.set_cookie_header(cookie_header)
 
@@ -658,6 +665,7 @@ class DelhaizeApi:
     async def _warm_browser_context(self) -> None:
         """Warm Delhaize website cookies before authenticated GraphQL refresh."""
         await self._request_context_page()
+        await self._request_blueconic_script()
         await self._request_digital_content_home()
 
     async def _request_context_page(self) -> None:
@@ -671,12 +679,50 @@ class DelhaizeApi:
             sec_fetch_dest="document",
             sec_fetch_site="none",
         )
-        await self._request_cookie_context(
+        response_text = await self._request_cookie_context(
             "DelhaizeHome",
             "GET",
             f"{BASE_URL}/",
             headers=headers,
         )
+        if response_text:
+            rpc_id = _blueconic_rpc_id_from_text(response_text)
+            if rpc_id and rpc_id != self._blueconic_rpc_id:
+                _LOGGER.debug(
+                    "Resolved Delhaize BlueConic RPC endpoint: rpc_id=%s",
+                    rpc_id,
+                )
+                self._blueconic_rpc_id = rpc_id
+
+    async def _request_blueconic_script(self) -> None:
+        """Request BlueConic script.js and resolve its current RPC endpoint."""
+        headers = self._browser_headers(
+            accept="*/*",
+            include_origin=False,
+            include_content_type=False,
+            referer=f"{BASE_URL}/",
+            sec_fetch_mode="no-cors",
+            sec_fetch_dest="script",
+            sec_fetch_site="same-site",
+        )
+        response_text = await self._request_cookie_context(
+            "BlueConicScript",
+            "GET",
+            BLUECONIC_SCRIPT_URL,
+            headers=headers,
+        )
+        if not response_text:
+            return
+
+        rpc_id = _blueconic_rpc_id_from_text(response_text)
+        if not rpc_id and _blueconic_script_uses_random_rpc_id(response_text):
+            rpc_id = _new_blueconic_rpc_id()
+        if rpc_id and rpc_id != self._blueconic_rpc_id:
+            _LOGGER.debug(
+                "Resolved Delhaize BlueConic RPC endpoint from script: rpc_id=%s",
+                rpc_id,
+            )
+            self._blueconic_rpc_id = rpc_id
 
     async def _request_digital_content_home(self) -> None:
         """Request home digital content like the browser does before GraphQL."""
@@ -783,7 +829,7 @@ class DelhaizeApi:
         await self._request_cookie_context(
             "BlueConicContext",
             "POST",
-            f"{BLUECONIC_URL}?{urlencode(params)}",
+            f"{BLUECONIC_RPC_BASE_URL}/{self._blueconic_rpc_id}?{urlencode(params)}",
             headers=headers,
             json_payload=payload,
         )
@@ -796,7 +842,7 @@ class DelhaizeApi:
         *,
         headers: dict[str, str],
         json_payload: Any | None = None,
-    ) -> None:
+    ) -> str | None:
         """Execute a non-GraphQL browser context request and store cookies."""
         before_cookies = dict(self._cookies)
         _LOGGER.debug(
@@ -827,7 +873,7 @@ class DelhaizeApi:
                 operation_name,
                 err,
             )
-            return
+            return None
 
         _LOGGER.debug(
             "Received Delhaize context response: operation=%s status=%s bytes=%s set_cookies=%s cookie_changes=%s",
@@ -837,6 +883,7 @@ class DelhaizeApi:
             sorted(response_cookies),
             _cookie_change_summary(before_cookies, self._cookies),
         )
+        return response_text
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -1581,6 +1628,28 @@ def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:
     if not key:
         return {}
     return {key: value.strip()}
+
+
+def _blueconic_rpc_id_from_text(text: str) -> str | None:
+    """Extract the BlueConic RPC id advertised by the website response."""
+    normalized = text.replace("\\/", "/").replace("%2F", "/").replace("%2f", "/")
+    match = re.search(r"/DG/DEFAULT/rest/rpc/([0-9]+)", normalized)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _blueconic_script_uses_random_rpc_id(text: str) -> bool:
+    """Return whether BlueConic script.js builds the RPC id with random Ib."""
+    return (
+        "Math.random())+100" in text
+        and '"/rest/rpc/"+ ++Ib' in text
+    )
+
+
+def _new_blueconic_rpc_id() -> str:
+    """Return a BlueConic RPC id matching script.js' ++Ib calculation."""
+    return str(random.randint(BLUECONIC_RPC_RANDOM_MIN, BLUECONIC_RPC_RANDOM_MAX))
 
 
 def _cookie_header_pairs(header: str) -> list[tuple[str, str]]:

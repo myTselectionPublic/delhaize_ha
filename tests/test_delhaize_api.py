@@ -140,14 +140,15 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_blueconic_context_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[5])
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -189,15 +190,16 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_blueconic_context_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_blueconic_context_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[5])
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -241,13 +243,14 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -293,6 +296,7 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
@@ -300,12 +304,61 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_blueconic_context_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[4])
         assert_refresh_customer_token_request(session.requests[5])
-        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[6])
+        assert "_abck=new-abck" in session.requests[6]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[7]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
+def test_refresh_uses_blueconic_random_rpc_id_from_script() -> None:
+    """The BlueConic RPC path follows script.js' random ++Ib calculation."""
+
+    async def run_test() -> None:
+        original_randint = delhaize_api.random.randint
+        delhaize_api.random.randint = lambda start, end: 339
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"grocery-roatc": "new-access-token"},
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
+                ),
+            ],
+            home_response=FakeResponse(
+                '<script id="blueconic-script" src="https://bc.delhaize.be/script.js"></script>'
+            ),
+            script_response=FakeResponse(
+                'var Ib=Math.floor(1E3*Math.random())+100;'
+                'resourceURL_POST:(I?BC_URL:W())+"/DG/"+Va+"/rest/rpc/"+ ++Ib'
+            ),
+        )
+        try:
+            api = DelhaizeApi(
+                session,
+                cookie_header=(
+                    "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                    "grocery-rortc=refresh-token"
+                ),
+            )
+
+            await api.get_loyalty_details()
+        finally:
+            delhaize_api.random.randint = original_randint
+
+        assert_blueconic_context_request(session.requests[4], rpc_id="339")
 
     asyncio.run(run_test())
 
@@ -387,15 +440,16 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_blueconic_context_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_blueconic_context_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[5])
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -426,6 +480,7 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
@@ -467,16 +522,17 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_blueconic_context_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[4])
         assert_refresh_customer_token_request(session.requests[5])
-        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[6])
+        assert "_abck=new-abck" in session.requests[6]["headers"]["Cookie"]
         assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -516,6 +572,7 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "DeviceId",
             "BlueConicContext",
@@ -523,8 +580,8 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert "deviceSessionId=device-1" in session.requests[4]["headers"]["Cookie"]
         assert "deviceSessionId=device-1" in session.requests[5]["headers"]["Cookie"]
+        assert "deviceSessionId=device-1" in session.requests[6]["headers"]["Cookie"]
         assert "deviceSessionId=device-1" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -561,6 +618,7 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
             "DelhaizeHome",
+            "BlueConicScript",
             "DigitalContentHome",
             "BlueConicContext",
             "RefreshCustomerToken",
@@ -699,9 +757,17 @@ def test_burnable_offer_ranges_fetches_only_range_offers() -> None:
 class FakeSession:
     """Minimal aiohttp-like session for GraphQL tests."""
 
-    def __init__(self, responses: list[FakeResponse]) -> None:
+    def __init__(
+        self,
+        responses: list[FakeResponse],
+        *,
+        home_response: FakeResponse | None = None,
+        script_response: FakeResponse | None = None,
+    ) -> None:
         """Initialize the fake response queue."""
         self._responses = responses
+        self._home_response = home_response
+        self._script_response = script_response
         self.requests: list[dict[str, Any]] = []
 
     def post(
@@ -740,7 +806,12 @@ class FakeSession:
         timeout: int,
     ) -> FakeRequest:
         """Return the next fake response for a GraphQL GET request."""
-        operation = params["operationName"] if params else "DelhaizeHome"
+        if params:
+            operation = params["operationName"]
+        elif url == "https://bc.delhaize.be/script.js":
+            operation = "BlueConicScript"
+        else:
+            operation = "DelhaizeHome"
         self.requests.append(
             {
                 "url": url,
@@ -752,7 +823,9 @@ class FakeSession:
             }
         )
         if operation == "DelhaizeHome":
-            return FakeRequest(FakeResponse({}))
+            return FakeRequest(self._home_response or FakeResponse({}))
+        if operation == "BlueConicScript":
+            return FakeRequest(self._script_response or FakeResponse(""))
         return FakeRequest(self._responses.pop(0))
 
 
@@ -785,7 +858,16 @@ def assert_browser_context_requests(
     assert "Referer" not in home_request["headers"]
     assert "Content-Type" not in home_request["headers"]
 
-    digital_request = requests[start + 1]
+    script_request = requests[start + 1]
+    assert script_request["operation"] == "BlueConicScript"
+    assert script_request["method"] == "GET"
+    assert script_request["url"] == "https://bc.delhaize.be/script.js"
+    assert script_request["headers"]["Referer"] == "https://www.delhaize.be/"
+    assert script_request["headers"]["Sec-Fetch-Dest"] == "script"
+    assert script_request["headers"]["Sec-Fetch-Mode"] == "no-cors"
+    assert "Content-Type" not in script_request["headers"]
+
+    digital_request = requests[start + 2]
     assert digital_request["operation"] == "DigitalContentHome"
     assert digital_request["method"] == "POST"
     assert digital_request["url"] == "https://digitalcontent1.delhaize.be/json"
@@ -803,11 +885,17 @@ def assert_browser_context_requests(
     }
 
 
-def assert_blueconic_context_request(request: dict[str, Any]) -> None:
+def assert_blueconic_context_request(
+    request: dict[str, Any],
+    *,
+    rpc_id: str = "101",
+) -> None:
     """Assert the BlueConic profile/pageview context call."""
     assert request["operation"] == "BlueConicContext"
     assert request["method"] == "POST"
-    assert request["url"].startswith("https://bc.delhaize.be/DG/DEFAULT/rest/rpc/101?")
+    assert request["url"].startswith(
+        f"https://bc.delhaize.be/DG/DEFAULT/rest/rpc/{rpc_id}?"
+    )
     assert "referer=https%3A%2F%2Fwww.delhaize.be%2F" in request["url"]
     assert request["headers"]["Origin"] == "https://www.delhaize.be"
     assert request["headers"]["Referer"] == "https://www.delhaize.be/"
@@ -862,7 +950,7 @@ class FakeResponse:
     ) -> None:
         """Initialize the response."""
         self.status = status
-        self._text = json_module.dumps(payload)
+        self._text = payload if isinstance(payload, str) else json_module.dumps(payload)
         self.cookies = SimpleCookie()
         for key, value in (cookies or {}).items():
             self.cookies[key] = value

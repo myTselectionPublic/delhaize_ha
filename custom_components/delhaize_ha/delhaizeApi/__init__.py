@@ -146,17 +146,6 @@ REFRESH_CUSTOMER_TOKEN_EXTENSIONS = {
     }
 }
 
-GET_SUBSCRIPTIONS_HASH = (
-    "4954d47094692ad47185f0c577fdf30b55f8f0f34c3ede1dbb542a41314dde31"
-)
-
-GET_SUBSCRIPTIONS_EXTENSIONS = {
-    "persistedQuery": {
-        "version": 1,
-        "sha256Hash": GET_SUBSCRIPTIONS_HASH,
-    }
-}
-
 DIGITAL_CONTENT_HOME_SLOTS = [
     {"slotname": "delhaize-be_home-flex", "parameters": {"ps": ["top"]}},
     {"slotname": "delhaize-be_home_2-flex", "parameters": {"ps": ["top"]}},
@@ -663,22 +652,6 @@ class DelhaizeApi:
                     summarize_graphql_errors(err.errors),
                     self._cookie_names(),
                 )
-
-        try:
-            await self.graphql(
-                "getSubscriptions",
-                variables={"customerId": "current", "lang": self.language},
-                extensions=GET_SUBSCRIPTIONS_EXTENSIONS,
-                allow_token_refresh=False,
-                method="GET",
-            )
-        except DelhaizeApiError as err:
-            _LOGGER.debug(
-                "Delhaize subscription bootstrap before refresh did not return data: error=%s errors=%s cookie_names=%s",
-                err,
-                summarize_graphql_errors(err.errors),
-                self._cookie_names(),
-            )
 
         await self._request_blueconic_context()
 

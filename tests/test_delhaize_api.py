@@ -67,7 +67,6 @@ DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
 REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIONS
-GET_SUBSCRIPTIONS_EXTENSIONS = delhaize_api.GET_SUBSCRIPTIONS_EXTENSIONS
 
 
 def test_cookie_header_preserves_browser_order_and_updates_values() -> None:
@@ -111,7 +110,6 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                         ]
                     }
                 ),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -143,15 +141,13 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
             "CurrentCustomer",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_get_subscriptions_request(session.requests[3])
-        assert_blueconic_context_request(session.requests[4])
-        assert_refresh_customer_token_request(session.requests[5])
+        assert_blueconic_context_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -164,7 +160,6 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -195,16 +190,14 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
             "getIbizaAccountDetails",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_get_subscriptions_request(session.requests[3])
-        assert_blueconic_context_request(session.requests[4])
-        assert_refresh_customer_token_request(session.requests[5])
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert_blueconic_context_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
+        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -217,7 +210,6 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     raw_set_cookie_headers=[
@@ -250,13 +242,12 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
             "getIbizaAccountDetails",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -269,7 +260,6 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc"},
@@ -304,18 +294,17 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
             "getIbizaAccountDetails",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_blueconic_context_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
         assert_refresh_customer_token_request(session.requests[5])
-        assert_refresh_customer_token_request(session.requests[6])
-        assert "_abck=new-abck" in session.requests[6]["headers"]["Cookie"]
-        assert "grocery-roatc=new-access-token" in session.requests[7]["headers"]["Cookie"]
+        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -368,7 +357,6 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
                         ]
                     }
                 ),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -400,16 +388,14 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
             "CurrentCustomer",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_get_subscriptions_request(session.requests[3])
-        assert_blueconic_context_request(session.requests[4])
-        assert_refresh_customer_token_request(session.requests[5])
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert_blueconic_context_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
+        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -421,7 +407,6 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
     async def run_test() -> None:
         session = FakeSession(
             [
-                FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
             ]
@@ -442,7 +427,6 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
             "getIbizaAccountDetails",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
         ]
@@ -457,7 +441,6 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc", "bm_sv": "new-bm"},
@@ -485,17 +468,15 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
             "getIbizaAccountDetails",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
         ]
         assert_browser_context_requests(session.requests, 1)
-        assert_get_subscriptions_request(session.requests[3])
-        assert_blueconic_context_request(session.requests[4])
+        assert_blueconic_context_request(session.requests[3])
+        assert_refresh_customer_token_request(session.requests[4])
         assert_refresh_customer_token_request(session.requests[5])
-        assert_refresh_customer_token_request(session.requests[6])
-        assert "_abck=new-abck" in session.requests[6]["headers"]["Cookie"]
+        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
         assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -509,7 +490,6 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -538,14 +518,13 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
             "DelhaizeHome",
             "DigitalContentHome",
             "DeviceId",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
         assert_browser_context_requests(session.requests, 1)
         assert "deviceSessionId=device-1" in session.requests[4]["headers"]["Cookie"]
-        assert "deviceSessionId=device-1" in session.requests[6]["headers"]["Cookie"]
+        assert "deviceSessionId=device-1" in session.requests[5]["headers"]["Cookie"]
         assert "deviceSessionId=device-1" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -558,7 +537,6 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse({"data": {}}, cookies={"_abck": "new-abck"}),
             ]
         )
@@ -584,7 +562,6 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
             "getIbizaAccountDetails",
             "DelhaizeHome",
             "DigitalContentHome",
-            "getSubscriptions",
             "BlueConicContext",
             "RefreshCustomerToken",
         ]
@@ -841,26 +818,6 @@ def assert_blueconic_context_request(request: dict[str, Any]) -> None:
         "addProperties",
         "createEvent",
     ]
-
-
-def assert_get_subscriptions_request(request: dict[str, Any]) -> None:
-    """Assert the bootstrap request matches Delhaize's persisted query GET."""
-    assert request["method"] == "GET"
-    assert request["headers"]["X-APOLLO-OPERATION-NAME"] == "getSubscriptions"
-    assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
-    assert request["headers"]["Referer"] == "https://www.delhaize.be/nl/my-account/dashboard"
-    assert "Content-Type" not in request["headers"]
-    assert request["params"] == {
-        "operationName": "getSubscriptions",
-        "variables": json_module.dumps(
-            {"customerId": "current", "lang": "nl"},
-            separators=(",", ":"),
-        ),
-        "extensions": json_module.dumps(
-            GET_SUBSCRIPTIONS_EXTENSIONS,
-            separators=(",", ":"),
-        ),
-    }
 
 
 class FakeRequest:

@@ -256,6 +256,66 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
     asyncio.run(run_test())
 
 
+def test_refresh_keeps_auth_cookie_when_later_set_cookie_deletes_domain_cookie() -> None:
+    """Browser refresh responses may set a token and then delete wider-domain cookies."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    raw_set_cookie_headers=[
+                        (
+                            "grocery-roatc=new-access-token; Max-Age=43199; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-roatc=; Max-Age=0; Domain=.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-rortc=; Max-Age=0; Domain=.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-wasc=; Max-Age=0; Domain=.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-roatc=; Max-Age=0; Domain=.api.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                    ],
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token; grocery-wasc=old-wasc"
+            ),
+        )
+
+        details = await api.get_loyalty_details()
+
+        assert details["loyaltyPoints"]["pointsBalance"] == 42
+        assert "grocery-roatc=new-access-token" in api.get_cookie_header()
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+
+    asyncio.run(run_test())
+
+
 def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None:
     """Akamai cookie updates may need to settle before Delhaize rotates auth."""
 

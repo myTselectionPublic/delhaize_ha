@@ -1604,9 +1604,17 @@ def _response_cookie_items(response: ClientResponse) -> dict[str, str]:
     raw_headers = getall("Set-Cookie", []) if callable(getall) else []
 
     for header in raw_headers:
-        cookies.update(_cookies_from_set_cookie_header(str(header)))
+        for key, value in _cookies_from_set_cookie_header(str(header)).items():
+            _merge_response_cookie(cookies, key, value)
 
     return cookies
+
+
+def _merge_response_cookie(cookies: dict[str, str], key: str, value: str) -> None:
+    """Merge one response cookie without losing a fresh value to a later deletion."""
+    if not value and cookies.get(key):
+        return
+    cookies[key] = value
 
 
 def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:

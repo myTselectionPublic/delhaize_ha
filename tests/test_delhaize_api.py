@@ -67,6 +67,9 @@ DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
 REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIONS
+APOLLO_CLIENT_NAME = delhaize_api.APOLLO_CLIENT_NAME
+APOLLO_CLIENT_VERSION = delhaize_api.APOLLO_CLIENT_VERSION
+COUPON_BOOK_OFFERS_QUERY = delhaize_api.COUPON_BOOK_OFFERS_QUERY
 
 
 def test_cookie_header_preserves_browser_order_and_updates_values() -> None:
@@ -92,6 +95,12 @@ def test_cookie_header_preserves_browser_order_and_updates_values() -> None:
         "z_cookie=last; grocery-roatc=new-access-token; "
         "a_cookie=first; grocery-rortc=refresh-token; bm_sv=new-bm"
     )
+
+
+def test_coupon_book_query_avoids_removed_redemption_fields() -> None:
+    """CouponBookPersonalOffer no longer exposes redemption date fields."""
+    assert "redemptionStartDate" not in COUPON_BOOK_OFFERS_QUERY
+    assert "redemptionEndDate" not in COUPON_BOOK_OFFERS_QUERY
 
 
 def test_validate_session_refreshes_pending_token_and_retries() -> None:
@@ -895,6 +904,8 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     assert request["headers"]["x-do-refresh-token"] == "true"
     assert request["headers"]["X-APOLLO-OPERATION-NAME"] == "RefreshCustomerToken"
     assert request["headers"]["X-APOLLO-OPERATION-ID"] == REFRESH_CUSTOMER_TOKEN_HASH
+    assert request["headers"]["Apollographql-Client-Name"] == APOLLO_CLIENT_NAME
+    assert request["headers"]["Apollographql-Client-Version"] == APOLLO_CLIENT_VERSION
     assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
     assert request["headers"]["Referer"] == "https://www.delhaize.be/"
     assert request["headers"]["Sec-CH-UA-Platform"] == '"Windows"'
@@ -986,9 +997,18 @@ class FakeRequest:
 class FakeHeaders:
     """Minimal response headers object with aiohttp-like getall support."""
 
-    def __init__(self, raw_set_cookie_headers: list[str]) -> None:
+    def __init__(
+        self,
+        raw_set_cookie_headers: list[str],
+        headers: dict[str, str] | None = None,
+    ) -> None:
         """Initialize the fake headers."""
         self._raw_set_cookie_headers = raw_set_cookie_headers
+        self._headers = {key.lower(): value for key, value in (headers or {}).items()}
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        """Return a single header value for a key."""
+        return self._headers.get(key.lower(), default)
 
     def getall(self, key: str, default: list[str] | None = None) -> list[str]:
         """Return all header values for a key."""
@@ -1007,6 +1027,7 @@ class FakeResponse:
         status: int = 200,
         cookies: dict[str, str] | None = None,
         raw_set_cookie_headers: list[str] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         """Initialize the response."""
         self.status = status
@@ -1014,7 +1035,7 @@ class FakeResponse:
         self.cookies = SimpleCookie()
         for key, value in (cookies or {}).items():
             self.cookies[key] = value
-        self.headers = FakeHeaders(raw_set_cookie_headers or [])
+        self.headers = FakeHeaders(raw_set_cookie_headers or [], headers)
 
     async def text(self) -> str:
         """Return the fake response body."""

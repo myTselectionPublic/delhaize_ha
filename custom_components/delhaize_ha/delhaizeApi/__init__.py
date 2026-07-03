@@ -38,6 +38,13 @@ BROWSER_CLIENT_HINT_HEADERS = {
     "Sec-CH-UA-Mobile": "?0",
     "Sec-CH-UA-Platform": '"Windows"',
 }
+APOLLO_CLIENT_NAME = "be-dll-web-stores"
+APOLLO_CLIENT_VERSION = "e3afe0ff3c704fbb04baca7ad43c30e8c5f1b9a6"
+DIAGNOSTIC_RESPONSE_HEADERS = (
+    "X-Operation-Status",
+    "X-Dih-Cache-Status",
+    "Server-Timing",
+)
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -244,8 +251,6 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       moreDetails
       activationStartDate
       activationEndDate
-      redemptionStartDate
-      redemptionEndDate
     }
     personalOffers {
       id
@@ -259,8 +264,6 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       moreDetails
       activationStartDate
       activationEndDate
-      redemptionStartDate
-      redemptionEndDate
     }
   }
 }
@@ -1261,16 +1264,19 @@ class DelhaizeApi:
                 self._store_response_cookies(response_cookies)
                 status = response.status
                 cookie_names = sorted(response_cookies)
+                diagnostic_headers = _response_diagnostic_headers(response)
         except (ClientError, TimeoutError, CancelledError) as err:
             _LOGGER.debug("Delhaize GraphQL request failed: operation=%s error=%r", operation_name, err)
             raise DelhaizeRequestError(f"Could not reach Delhaize: {err}") from err
 
         _LOGGER.debug(
-            "Received Delhaize GraphQL response: operation=%s status=%s bytes=%s set_cookies=%s",
+            "Received Delhaize GraphQL response: operation=%s status=%s bytes=%s "
+            "set_cookies=%s response_headers=%s",
             operation_name,
             status,
             len(response_text),
             cookie_names,
+            diagnostic_headers,
         )
         result = self._decode_response(response_text, operation_name)
         if status >= 400:
@@ -1301,6 +1307,8 @@ class DelhaizeApi:
         headers = {
             "Accept": "*/*",
             "Accept-Language": _accept_language(self.language),
+            "Apollographql-Client-Name": APOLLO_CLIENT_NAME,
+            "Apollographql-Client-Version": APOLLO_CLIENT_VERSION,
             "Origin": BASE_URL,
             "Referer": self._referer(operation_name),
             "Sec-Fetch-Dest": "empty",
@@ -1608,6 +1616,21 @@ def _response_cookie_items(response: ClientResponse) -> dict[str, str]:
             _merge_response_cookie(cookies, key, value)
 
     return cookies
+
+
+def _response_diagnostic_headers(response: ClientResponse) -> dict[str, str]:
+    """Return selected response headers that explain refresh decisions."""
+    headers = getattr(response, "headers", None)
+    get = getattr(headers, "get", None)
+    if not callable(get):
+        return {}
+
+    diagnostic_headers: dict[str, str] = {}
+    for key in DIAGNOSTIC_RESPONSE_HEADERS:
+        value = get(key)
+        if value:
+            diagnostic_headers[key] = str(value)[:200]
+    return diagnostic_headers
 
 
 def _merge_response_cookie(cookies: dict[str, str], key: str, value: str) -> None:

@@ -105,7 +105,7 @@ content: |
 
   {% if personal %}
   | Promotion | Details | Points | Until |
-  |---|---|---:|---:|---:|
+  |---|---|---:|---:|
   {% for offer in personal %}| {{ offer.get('description', '-') | replace('|',' ') }} | {{ offer.get('promotion', '-') }} | {{ offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
   {% endfor %}
   {% else %}

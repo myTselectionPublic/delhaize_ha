@@ -67,7 +67,9 @@ DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
 REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIONS
-GET_SUBSCRIPTIONS_EXTENSIONS = delhaize_api.GET_SUBSCRIPTIONS_EXTENSIONS
+APOLLO_CLIENT_NAME = delhaize_api.APOLLO_CLIENT_NAME
+APOLLO_CLIENT_VERSION = delhaize_api.APOLLO_CLIENT_VERSION
+COUPON_BOOK_OFFERS_QUERY = delhaize_api.COUPON_BOOK_OFFERS_QUERY
 
 
 def test_cookie_header_preserves_browser_order_and_updates_values() -> None:
@@ -93,6 +95,12 @@ def test_cookie_header_preserves_browser_order_and_updates_values() -> None:
         "z_cookie=last; grocery-roatc=new-access-token; "
         "a_cookie=first; grocery-rortc=refresh-token; bm_sv=new-bm"
     )
+
+
+def test_coupon_book_query_avoids_removed_redemption_fields() -> None:
+    """CouponBookPersonalOffer no longer exposes redemption date fields."""
+    assert "redemptionStartDate" not in COUPON_BOOK_OFFERS_QUERY
+    assert "redemptionEndDate" not in COUPON_BOOK_OFFERS_QUERY
 
 
 def test_validate_session_refreshes_pending_token_and_retries() -> None:
@@ -263,6 +271,66 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
     asyncio.run(run_test())
 
 
+def test_refresh_keeps_auth_cookie_when_later_set_cookie_deletes_domain_cookie() -> None:
+    """Browser refresh responses may set a token and then delete wider-domain cookies."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    raw_set_cookie_headers=[
+                        (
+                            "grocery-roatc=new-access-token; Max-Age=43199; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-roatc=; Max-Age=0; Domain=.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-rortc=; Max-Age=0; Domain=.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-wasc=; Max-Age=0; Domain=.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                        (
+                            "grocery-roatc=; Max-Age=0; Domain=.api.delhaize.be; "
+                            "Path=/; HttpOnly; Secure; SameSite=None"
+                        ),
+                    ],
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token; grocery-wasc=old-wasc"
+            ),
+        )
+
+        details = await api.get_loyalty_details()
+
+        assert details["loyaltyPoints"]["pointsBalance"] == 42
+        assert "grocery-roatc=new-access-token" in api.get_cookie_header()
+        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+
+    asyncio.run(run_test())
+
+
 def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None:
     """Akamai cookie updates may need to settle before Delhaize rotates auth."""
 
@@ -318,6 +386,55 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
+def test_refresh_uses_blueconic_random_rpc_id_from_script() -> None:
+    """The BlueConic RPC path follows script.js' random ++Ib calculation."""
+
+    async def run_test() -> None:
+        original_randint = delhaize_api.random.randint
+        delhaize_api.random.randint = lambda start, end: 339
+        session = FakeSession(
+            [
+                FakeResponse({"errors": [{"message": "Access token expired"}]}),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"grocery-roatc": "new-access-token"},
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "loyaltyPoints": {"pointsBalance": 42},
+                            "nutriscoreBalance": {},
+                            "savings": {},
+                        }
+                    }
+                ),
+            ],
+            home_response=FakeResponse(
+                '<script id="blueconic-script" src="https://bc.delhaize.be/script.js"></script>'
+            ),
+            script_response=FakeResponse(
+                'var Ib=Math.floor(1E3*Math.random())+100;'
+                'resourceURL_POST:(I?BC_URL:W())+"/DG/"+Va+"/rest/rpc/"+ ++Ib'
+            ),
+        )
+        try:
+            api = DelhaizeApi(
+                session,
+                cookie_header=(
+                    "deviceSessionId=device-1; grocery-roatc=old-access-token; "
+                    "grocery-rortc=refresh-token"
+                ),
+            )
+
+            await api.get_loyalty_details()
+        finally:
+            delhaize_api.random.randint = original_randint
+
+        assert_blueconic_context_request(session.requests[4], rpc_id="339")
 
     asyncio.run(run_test())
 
@@ -513,7 +630,6 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({}),
                 FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -541,7 +657,7 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
             "getIbizaAccountDetails",
             "AkamaiPixel",
             "DeviceId",
-            "getSubscriptions",
+            "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
@@ -726,9 +842,17 @@ def test_burnable_offer_ranges_fetches_only_range_offers() -> None:
 class FakeSession:
     """Minimal aiohttp-like session for GraphQL tests."""
 
-    def __init__(self, responses: list[FakeResponse]) -> None:
+    def __init__(
+        self,
+        responses: list[FakeResponse],
+        *,
+        home_response: FakeResponse | None = None,
+        script_response: FakeResponse | None = None,
+    ) -> None:
         """Initialize the fake response queue."""
         self._responses = responses
+        self._home_response = home_response
+        self._script_response = script_response
         self.requests: list[dict[str, Any]] = []
 
     def post(
@@ -747,33 +871,46 @@ class FakeSession:
                 "url": url,
                 "method": "POST",
                 "operation": operation,
+                "operation": operation,
                 "payload": json,
                 "data": data,
                 "headers": headers,
                 "timeout": timeout,
             }
         )
+        if operation in {"BlueConicContext", "DigitalContentHome"}:
+            return FakeRequest(FakeResponse([]))
         return FakeRequest(self._responses.pop(0))
 
     def get(
         self,
         url: str,
         *,
-        params: dict[str, str],
+        params: dict[str, str] | None = None,
         headers: dict[str, str],
         timeout: int,
     ) -> FakeRequest:
         """Return the next fake response for a GraphQL GET request."""
+        if params:
+            operation = params["operationName"]
+        elif url == "https://bc.delhaize.be/script.js":
+            operation = "BlueConicScript"
+        else:
+            operation = "DelhaizeHome"
         self.requests.append(
             {
                 "url": url,
                 "method": "GET",
-                "operation": params["operationName"],
-                "params": params,
+                "operation": operation,
+                "params": params or {},
                 "headers": headers,
                 "timeout": timeout,
             }
         )
+        if operation == "DelhaizeHome":
+            return FakeRequest(self._home_response or FakeResponse({}))
+        if operation == "BlueConicScript":
+            return FakeRequest(self._script_response or FakeResponse(""))
         return FakeRequest(self._responses.pop(0))
 
 
@@ -783,8 +920,11 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     assert request["headers"]["x-do-refresh-token"] == "true"
     assert request["headers"]["X-APOLLO-OPERATION-NAME"] == "RefreshCustomerToken"
     assert request["headers"]["X-APOLLO-OPERATION-ID"] == REFRESH_CUSTOMER_TOKEN_HASH
+    assert request["headers"]["Apollographql-Client-Name"] == APOLLO_CLIENT_NAME
+    assert request["headers"]["Apollographql-Client-Version"] == APOLLO_CLIENT_VERSION
     assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
-    assert request["headers"]["Referer"] == "https://www.delhaize.be/nl/my-account/dashboard"
+    assert request["headers"]["Referer"] == "https://www.delhaize.be/"
+    assert request["headers"]["Sec-CH-UA-Platform"] == '"Windows"'
     assert request["payload"] == {
         "operationName": "RefreshCustomerToken",
         "variables": {},
@@ -847,9 +987,18 @@ class FakeRequest:
 class FakeHeaders:
     """Minimal response headers object with aiohttp-like getall support."""
 
-    def __init__(self, raw_set_cookie_headers: list[str]) -> None:
+    def __init__(
+        self,
+        raw_set_cookie_headers: list[str],
+        headers: dict[str, str] | None = None,
+    ) -> None:
         """Initialize the fake headers."""
         self._raw_set_cookie_headers = raw_set_cookie_headers
+        self._headers = {key.lower(): value for key, value in (headers or {}).items()}
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        """Return a single header value for a key."""
+        return self._headers.get(key.lower(), default)
 
     def getall(self, key: str, default: list[str] | None = None) -> list[str]:
         """Return all header values for a key."""
@@ -863,19 +1012,20 @@ class FakeResponse:
 
     def __init__(
         self,
-        payload: dict[str, Any],
+        payload: Any,
         *,
         status: int = 200,
         cookies: dict[str, str] | None = None,
         raw_set_cookie_headers: list[str] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         """Initialize the response."""
         self.status = status
-        self._text = json_module.dumps(payload)
+        self._text = payload if isinstance(payload, str) else json_module.dumps(payload)
         self.cookies = SimpleCookie()
         for key, value in (cookies or {}).items():
             self.cookies[key] = value
-        self.headers = FakeHeaders(raw_set_cookie_headers or [])
+        self.headers = FakeHeaders(raw_set_cookie_headers or [], headers)
 
     async def text(self) -> str:
         """Return the fake response body."""

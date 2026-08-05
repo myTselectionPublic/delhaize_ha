@@ -4,16 +4,11 @@ from __future__ import annotations
 
 from asyncio import CancelledError, TimeoutError
 from hashlib import sha1
-from datetime import datetime
 from http.cookies import CookieError, SimpleCookie
 import json
 import logging
 from time import time
-import random
-import re
-import time
 from typing import Any
-from urllib.parse import urlencode
 from urllib.parse import urlencode
 
 from aiohttp import ClientResponse, ClientSession
@@ -26,29 +21,6 @@ _LOGGER = logging.getLogger(__name__)
 AKAMAI_PIXEL_URL = f"{BASE_URL}/akam/13/pixel_36d02966"
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
-DIGITAL_CONTENT_URL = "https://digitalcontent1.delhaize.be/json"
-BLUECONIC_SCRIPT_URL = "https://bc.delhaize.be/script.js"
-BLUECONIC_RPC_BASE_URL = "https://bc.delhaize.be/DG/DEFAULT/rest/rpc"
-BLUECONIC_DEFAULT_RPC_ID = "101"
-BLUECONIC_RPC_RANDOM_MIN = 101
-BLUECONIC_RPC_RANDOM_MAX = 1100
-BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0 Safari/537.36"
-)
-BROWSER_CLIENT_HINT_HEADERS = {
-    "Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    "Sec-CH-UA-Mobile": "?0",
-    "Sec-CH-UA-Platform": '"Windows"',
-}
-APOLLO_CLIENT_NAME = "be-dll-web-stores"
-APOLLO_CLIENT_VERSION = "e3afe0ff3c704fbb04baca7ad43c30e8c5f1b9a6"
-DIAGNOSTIC_RESPONSE_HEADERS = (
-    "X-Operation-Status",
-    "X-Dih-Cache-Status",
-    "Server-Timing",
-)
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -163,12 +135,16 @@ REFRESH_CUSTOMER_TOKEN_EXTENSIONS = {
     }
 }
 
-DIGITAL_CONTENT_HOME_SLOTS = [
-    {"slotname": "delhaize-be_home-flex", "parameters": {"ps": ["top"]}},
-    {"slotname": "delhaize-be_home_2-flex", "parameters": {"ps": ["top"]}},
-    {"slotname": "delhaize-be_home_3-flex", "parameters": {"ps": ["top"]}},
-    {"slotname": "delhaize-be_home_4-flex", "parameters": {"ps": ["top"]}},
-]
+GET_SUBSCRIPTIONS_HASH = (
+    "4954d47094692ad47185f0c577fdf30b55f8f0f34c3ede1dbb542a41314dde31"
+)
+
+GET_SUBSCRIPTIONS_EXTENSIONS = {
+    "persistedQuery": {
+        "version": 1,
+        "sha256Hash": GET_SUBSCRIPTIONS_HASH,
+    }
+}
 
 CURRENT_CUSTOMER_QUERY = """
 query CurrentCustomer($mode: String!) {
@@ -255,6 +231,8 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       moreDetails
       activationStartDate
       activationEndDate
+      redemptionStartDate
+      redemptionEndDate
     }
     personalOffers {
       id
@@ -268,6 +246,8 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       moreDetails
       activationStartDate
       activationEndDate
+      redemptionStartDate
+      redemptionEndDate
     }
   }
 }
@@ -456,7 +436,6 @@ class DelhaizeApi:
         self.websession = websession
         self.language = language
         self._cookies: dict[str, str] = {}
-        self._blueconic_rpc_id = BLUECONIC_DEFAULT_RPC_ID
         if cookie_header:
             self.set_cookie_header(cookie_header)
 
@@ -601,7 +580,6 @@ class DelhaizeApi:
                     "RefreshCustomerToken",
                     extensions=REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
                     extra_headers={
-                        "Referer": f"{BASE_URL}/",
                         "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
                         "x-do-refresh-token": "true",
                     },
@@ -666,220 +644,21 @@ class DelhaizeApi:
                 await self.get_device_id(allow_token_refresh=False)
             except DelhaizeApiError as err:
                 _LOGGER.debug(
-                    "Could not initialize Delhaize device session before auth refresh: error=%s errors=%s cookie_names=%s",
+                    "Could not refresh Delhaize device session before auth refresh: error=%s errors=%s cookie_names=%s",
                     err,
                     summarize_graphql_errors(err.errors),
                     self._cookie_names(),
                 )
 
-        await self._request_blueconic_context()
-
-    async def _warm_browser_context(self) -> None:
-        """Warm Delhaize website cookies before authenticated GraphQL refresh."""
-        await self._request_context_page()
-        await self._request_blueconic_script()
-        await self._request_digital_content_home()
-
-    async def _request_context_page(self) -> None:
-        """Request the Delhaize home page to refresh website context cookies."""
-        headers = self._browser_headers(
-            accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            include_origin=False,
-            include_content_type=False,
-            referer=None,
-            sec_fetch_mode="navigate",
-            sec_fetch_dest="document",
-            sec_fetch_site="none",
-        )
-        response_text = await self._request_cookie_context(
-            "DelhaizeHome",
-            "GET",
-            f"{BASE_URL}/",
-            headers=headers,
-        )
-        if response_text:
-            rpc_id = _blueconic_rpc_id_from_text(response_text)
-            if rpc_id and rpc_id != self._blueconic_rpc_id:
-                _LOGGER.debug(
-                    "Resolved Delhaize BlueConic RPC endpoint: rpc_id=%s",
-                    rpc_id,
-                )
-                self._blueconic_rpc_id = rpc_id
-
-    async def _request_blueconic_script(self) -> None:
-        """Request BlueConic script.js and resolve its current RPC endpoint."""
-        headers = self._browser_headers(
-            accept="*/*",
-            include_origin=False,
-            include_content_type=False,
-            referer=f"{BASE_URL}/",
-            sec_fetch_mode="no-cors",
-            sec_fetch_dest="script",
-            sec_fetch_site="same-site",
-        )
-        response_text = await self._request_cookie_context(
-            "BlueConicScript",
-            "GET",
-            BLUECONIC_SCRIPT_URL,
-            headers=headers,
-        )
-        if not response_text:
-            return
-
-        rpc_id = _blueconic_rpc_id_from_text(response_text)
-        if not rpc_id and _blueconic_script_uses_random_rpc_id(response_text):
-            rpc_id = _new_blueconic_rpc_id()
-        if rpc_id and rpc_id != self._blueconic_rpc_id:
-            _LOGGER.debug(
-                "Resolved Delhaize BlueConic RPC endpoint from script: rpc_id=%s",
-                rpc_id,
-            )
-            self._blueconic_rpc_id = rpc_id
-
-    async def _request_digital_content_home(self) -> None:
-        """Request home digital content like the browser does before GraphQL."""
-        headers = self._browser_headers(
-            accept="*/*",
-            include_origin=True,
-            include_content_type=True,
-            referer=f"{BASE_URL}/{self.language}",
-            sec_fetch_mode="cors",
-            sec_fetch_dest="empty",
-            sec_fetch_site="same-site",
-        )
-        await self._request_cookie_context(
-            "DigitalContentHome",
-            "POST",
-            DIGITAL_CONTENT_URL,
-            headers=headers,
-            json_payload={
-                "slots": DIGITAL_CONTENT_HOME_SLOTS,
-                "parameters": {
-                    "pt": ["home"],
-                    "ln": [self.language],
-                    "tc": ["false"],
-                    "te": ["false"],
-                    "tl": ["none"],
-                    "um": ["no_consent"],
-                    "cu": ["b2c"],
-                    "pp": ["_"],
-                },
-            },
-        )
-
-    async def _request_blueconic_context(self) -> None:
-        """Request BlueConic profile/pageview context before auth refresh."""
-        now = datetime.now().astimezone()
-        timestamp_ms = int(time.time() * 1000)
-        base_id = str(timestamp_ms)
-        params = {
-            "referer": f"{BASE_URL}/",
-            "bcsessionid": "",
-            "bctempid": "",
-            "overruleReferrer": "",
-            "time": now.isoformat(timespec="seconds"),
-            "ts": str(timestamp_ms),
-        }
-        payload = [
-            {"method": "getProfile", "params": "null", "id": base_id},
-            {
-                "method": "setProperties",
-                "params": json.dumps(
-                    {
-                        "properties": {
-                            "websiteLang": [self.language],
-                            "language": ["en"],
-                            "currentscreenwidth": [1920],
-                            "currentscreenheight": [1080],
-                            "currentresolution": ["1920x1080"],
-                            "entrypage": [f"{BASE_URL}/"],
-                        },
-                        "sources": {
-                            "listener_website_language_delhaize": ["websiteLang"],
-                            "listenerinteractiontype": [
-                                "language",
-                                "currentscreenwidth",
-                                "currentscreenheight",
-                                "currentresolution",
-                                "entrypage",
-                            ],
-                        },
-                    },
-                    separators=(",", ":"),
-                ),
-                "id": str(timestamp_ms + 1),
-            },
-            {
-                "method": "addProperties",
-                "params": json.dumps(
-                    {
-                        "properties": {"resolution": ["1920x1080"]},
-                        "sources": {"listenerinteractiontype": ["resolution"]},
-                    },
-                    separators=(",", ":"),
-                ),
-                "id": str(timestamp_ms + 2),
-            },
-            {
-                "method": "createEvent",
-                "params": json.dumps(
-                    {"type": ["PAGEVIEW"], "referrer": [""], "profile": []},
-                    separators=(",", ":"),
-                ),
-                "id": str(timestamp_ms + 3),
-            },
-        ]
-        headers = self._browser_headers(
-            accept="*/*",
-            include_origin=True,
-            include_content_type=True,
-            referer=f"{BASE_URL}/",
-            sec_fetch_mode="cors",
-            sec_fetch_dest="empty",
-            sec_fetch_site="same-site",
-        )
-        await self._request_cookie_context(
-            "BlueConicContext",
-            "POST",
-            f"{BLUECONIC_RPC_BASE_URL}/{self._blueconic_rpc_id}?{urlencode(params)}",
-            headers=headers,
-            json_payload=payload,
-        )
-
-    async def _request_cookie_context(
-        self,
-        operation_name: str,
-        method: str,
-        url: str,
-        *,
-        headers: dict[str, str],
-        json_payload: Any | None = None,
-    ) -> str | None:
-        """Execute a non-GraphQL browser context request and store cookies."""
-        before_cookies = dict(self._cookies)
-        _LOGGER.debug(
-            "Sending Delhaize context request: operation=%s method=%s cookie_present=%s",
-            operation_name,
-            method,
-            "Cookie" in headers,
-        )
         try:
-            if method == "GET":
-                request = self.websession.get(url, headers=headers, timeout=30)
-            else:
-                request = self.websession.post(
-                    url,
-                    json=json_payload or {},
-                    headers=headers,
-                    timeout=30,
-                )
-
-            async with request as response:
-                response_text = await response.text()
-                response_cookies = _response_cookie_items(response)
-                self._store_response_cookies(response_cookies)
-                status = response.status
-        except (ClientError, TimeoutError, CancelledError) as err:
+            await self.graphql(
+                "getSubscriptions",
+                variables={"customerId": "current", "lang": self.language},
+                extensions=GET_SUBSCRIPTIONS_EXTENSIONS,
+                allow_token_refresh=False,
+                method="GET",
+            )
+        except DelhaizeApiError as err:
             _LOGGER.debug(
                 "Delhaize subscription bootstrap before refresh did not return data: error=%s errors=%s cookie_names=%s",
                 err,
@@ -1296,19 +1075,16 @@ class DelhaizeApi:
                 self._store_response_cookies(response_cookies)
                 status = response.status
                 cookie_names = sorted(response_cookies)
-                diagnostic_headers = _response_diagnostic_headers(response)
         except (ClientError, TimeoutError, CancelledError) as err:
             _LOGGER.debug("Delhaize GraphQL request failed: operation=%s error=%r", operation_name, err)
             raise DelhaizeRequestError(f"Could not reach Delhaize: {err}") from err
 
         _LOGGER.debug(
-            "Received Delhaize GraphQL response: operation=%s status=%s bytes=%s "
-            "set_cookies=%s response_headers=%s",
+            "Received Delhaize GraphQL response: operation=%s status=%s bytes=%s set_cookies=%s",
             operation_name,
             status,
             len(response_text),
             cookie_names,
-            diagnostic_headers,
         )
         result = self._decode_response(response_text, operation_name)
         if status >= 400:
@@ -1356,8 +1132,6 @@ class DelhaizeApi:
         headers = {
             "Accept": "*/*",
             "Accept-Language": _accept_language(self.language),
-            "Apollographql-Client-Name": APOLLO_CLIENT_NAME,
-            "Apollographql-Client-Version": APOLLO_CLIENT_VERSION,
             "Origin": BASE_URL,
             "Referer": referer or f"{BASE_URL}/{self.language}/my-account/dashboard",
             "Sec-Fetch-Dest": "empty",
@@ -1628,32 +1402,9 @@ def _response_cookie_items(response: ClientResponse) -> dict[str, str]:
     raw_headers = getall("Set-Cookie", []) if callable(getall) else []
 
     for header in raw_headers:
-        for key, value in _cookies_from_set_cookie_header(str(header)).items():
-            _merge_response_cookie(cookies, key, value)
+        cookies.update(_cookies_from_set_cookie_header(str(header)))
 
     return cookies
-
-
-def _response_diagnostic_headers(response: ClientResponse) -> dict[str, str]:
-    """Return selected response headers that explain refresh decisions."""
-    headers = getattr(response, "headers", None)
-    get = getattr(headers, "get", None)
-    if not callable(get):
-        return {}
-
-    diagnostic_headers: dict[str, str] = {}
-    for key in DIAGNOSTIC_RESPONSE_HEADERS:
-        value = get(key)
-        if value:
-            diagnostic_headers[key] = str(value)[:200]
-    return diagnostic_headers
-
-
-def _merge_response_cookie(cookies: dict[str, str], key: str, value: str) -> None:
-    """Merge one response cookie without losing a fresh value to a later deletion."""
-    if not value and cookies.get(key):
-        return
-    cookies[key] = value
 
 
 def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:
@@ -1675,28 +1426,6 @@ def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:
     if not key:
         return {}
     return {key: value.strip()}
-
-
-def _blueconic_rpc_id_from_text(text: str) -> str | None:
-    """Extract the BlueConic RPC id advertised by the website response."""
-    normalized = text.replace("\\/", "/").replace("%2F", "/").replace("%2f", "/")
-    match = re.search(r"/DG/DEFAULT/rest/rpc/([0-9]+)", normalized)
-    if match:
-        return match.group(1)
-    return None
-
-
-def _blueconic_script_uses_random_rpc_id(text: str) -> bool:
-    """Return whether BlueConic script.js builds the RPC id with random Ib."""
-    return (
-        "Math.random())+100" in text
-        and '"/rest/rpc/"+ ++Ib' in text
-    )
-
-
-def _new_blueconic_rpc_id() -> str:
-    """Return a BlueConic RPC id matching script.js' ++Ib calculation."""
-    return str(random.randint(BLUECONIC_RPC_RANDOM_MIN, BLUECONIC_RPC_RANDOM_MAX))
 
 
 def _cookie_header_pairs(header: str) -> list[tuple[str, str]]:

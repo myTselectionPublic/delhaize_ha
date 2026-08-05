@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from asyncio import CancelledError, TimeoutError
+from hashlib import sha1
 from http.cookies import CookieError, SimpleCookie
 import json
 import logging
+from time import time
 from typing import Any
+from urllib.parse import urlencode
 
 from aiohttp import ClientResponse, ClientSession
 from aiohttp.client_exceptions import ClientError
@@ -15,6 +18,7 @@ from ..const import API_URL, BASE_URL, DEFAULT_LANGUAGE
 
 _LOGGER = logging.getLogger(__name__)
 
+AKAMAI_PIXEL_URL = f"{BASE_URL}/akam/13/pixel_36d02966"
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
 CUSTOMER_AUTH_COOKIE_NAMES = {
@@ -625,6 +629,16 @@ class DelhaizeApi:
 
     async def _prepare_customer_refresh_context(self) -> None:
         """Mimic the browser calls that establish customer refresh context."""
+        try:
+            await self._send_akamai_pixel()
+        except DelhaizeApiError as err:
+            _LOGGER.debug(
+                "Could not send Delhaize Akamai pixel before auth refresh: error=%s errors=%s cookie_names=%s",
+                err,
+                summarize_graphql_errors(err.errors),
+                self._cookie_names(),
+            )
+
         if self._has_customer_refresh_cookie():
             try:
                 await self.get_device_id(allow_token_refresh=False)
@@ -651,6 +665,39 @@ class DelhaizeApi:
                 summarize_graphql_errors(err.errors),
                 self._cookie_names(),
             )
+
+    async def _send_akamai_pixel(self) -> None:
+        """Send the browser anti-bot pixel that often precedes token refresh."""
+        headers = self._browser_context_headers(
+            content_type="application/x-www-form-urlencoded"
+        )
+        payload = _akamai_pixel_payload(self.get_cookie_header(), self.language)
+        _LOGGER.debug(
+            "Sending Delhaize Akamai pixel before auth refresh: cookie_present=%s",
+            "Cookie" in headers,
+        )
+        try:
+            async with self.websession.post(
+                AKAMAI_PIXEL_URL,
+                data=payload,
+                headers=headers,
+                timeout=30,
+            ) as response:
+                await response.text()
+                response_cookies = _response_cookie_items(response)
+                self._store_response_cookies(response_cookies)
+                status = response.status
+                cookie_names = sorted(response_cookies)
+        except (ClientError, TimeoutError) as err:
+            raise DelhaizeRequestError(
+                f"Could not reach Delhaize Akamai pixel: {err}"
+            ) from err
+
+        _LOGGER.debug(
+            "Received Delhaize Akamai pixel response: status=%s set_cookies=%s",
+            status,
+            cookie_names,
+        )
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -1065,29 +1112,42 @@ class DelhaizeApi:
         include_content_type: bool = True,
     ) -> dict[str, str]:
         """Build request headers matching the Delhaize web client."""
+        headers = self._browser_context_headers(
+            content_type="application/json" if include_content_type else None,
+            referer=self._referer(operation_name),
+        )
+        headers["X-APOLLO-OPERATION-NAME"] = operation_name
+        headers["x-default-gql-refresh-token-disabled"] = "true"
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
+
+    def _browser_context_headers(
+        self,
+        *,
+        content_type: str | None = None,
+        referer: str | None = None,
+    ) -> dict[str, str]:
+        """Return fetch headers shared by browser context requests."""
         headers = {
             "Accept": "*/*",
             "Accept-Language": _accept_language(self.language),
             "Origin": BASE_URL,
-            "Referer": self._referer(operation_name),
+            "Referer": referer or f"{BASE_URL}/{self.language}/my-account/dashboard",
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
+                "Chrome/150.0.0.0 Safari/537.36"
             ),
-            "X-APOLLO-OPERATION-NAME": operation_name,
-            "x-default-gql-refresh-token-disabled": "true",
         }
-        if include_content_type:
-            headers["Content-Type"] = "application/json"
+        if content_type:
+            headers["Content-Type"] = content_type
         cookie_header = self.get_cookie_header()
         if cookie_header:
             headers["Cookie"] = cookie_header
-        if extra_headers:
-            headers.update(extra_headers)
         return headers
 
     def _referer(self, operation_name: str) -> str:
@@ -1401,6 +1461,184 @@ def _accept_language(language: str) -> str:
     if normalized == "en":
         return "en-US,en;q=0.9,nl-BE;q=0.8,nl;q=0.7,fr-BE;q=0.6,fr;q=0.5"
     return "nl-BE,nl;q=0.9,fr-BE;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5"
+
+
+def _akamai_pixel_payload(cookie_header: str, language: str) -> str:
+    """Return a best-effort Akamai pixel form body matching browser shape."""
+    now_ms = int(time() * 1000)
+    seed = f"{cookie_header}|{language}|{now_ms}"
+    token = sha1(seed.encode("utf-8")).hexdigest()
+    cv = sha1(f"cv|{seed}".encode("utf-8")).hexdigest()
+    user_token = sha1(f"u|{seed}".encode("utf-8")).hexdigest()
+    nav_languages = ["en-US", "nl", "en", "fr"]
+
+    payload = {
+        "ap": "true",
+        "bt": json.dumps(
+            {
+                "charging": False,
+                "chargingTime": "Infinity",
+                "dischargingTime": 3948,
+                "level": 0.69,
+                "onchargingchange": None,
+                "onchargingtimechange": None,
+                "ondischargingtimechange": None,
+                "onlevelchange": None,
+            },
+            separators=(",", ":"),
+        ),
+        "fonts": "null",
+        "fh": "null",
+        "timing": json.dumps(
+            {
+                "1": 63,
+                "2": 2885,
+                "profile": {
+                    "bp": 6,
+                    "sr": 1,
+                    "dp": 1,
+                    "lt": 0,
+                    "ps": 0,
+                    "cv": 30,
+                    "fp": 0,
+                    "sp": 1,
+                    "br": 0,
+                    "ieps": 0,
+                    "av": 0,
+                    "z1": 21,
+                    "jsv": 1,
+                    "nav": 0,
+                    "nap": 1,
+                    "crc": 0,
+                    "z2": 3,
+                },
+                "main": 1629,
+                "compute": 63,
+                "send": 2885,
+            },
+            separators=(",", ":"),
+        ),
+        "bp": "",
+        "sr": json.dumps(
+            {
+                "inner": [1920, 911],
+                "outer": [1920, 1032],
+                "screen": [0, 0],
+                "pageOffset": [0, 0],
+                "avail": [1920, 1032],
+                "size": [1920, 1080],
+                "client": [1905, 3271],
+                "colorDepth": 24,
+                "pixelDepth": 24,
+            },
+            separators=(",", ":"),
+        ),
+        "dp": json.dumps(
+            {
+                "XDomainRequest": 0,
+                "createPopup": 0,
+                "removeEventListener": 1,
+                "globalStorage": 0,
+                "openDatabase": 0,
+                "indexedDB": 1,
+                "attachEvent": 0,
+                "ActiveXObject": 0,
+                "dispatchEvent": 1,
+                "addBehavior": 0,
+                "addEventListener": 1,
+                "detachEvent": 0,
+                "fireEvent": 0,
+                "MutationObserver": 1,
+                "HTMLMenuItemElement": 0,
+                "Int8Array": 1,
+                "postMessage": 1,
+                "querySelector": 1,
+                "getElementsByClassName": 1,
+                "images": 1,
+                "compatMode": "CSS1Compat",
+                "documentMode": 0,
+                "all": 1,
+                "now": 1,
+                "contextMenu": 0,
+            },
+            separators=(",", ":"),
+        ),
+        "lt": f"{now_ms}+2",
+        "ps": "true,true",
+        "cv": cv,
+        "fp": "false",
+        "sp": "false",
+        "br": "Chrome",
+        "ieps": "false",
+        "av": "false",
+        "z": json.dumps(
+            {"a": int(token[:8], 16), "b": 1, "c": 1},
+            separators=(",", ":"),
+        ),
+        "zh": "",
+        "jsv": "1.5",
+        "nav": json.dumps(
+            {
+                "userAgent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/150.0.0.0 Safari/537.36"
+                ),
+                "appName": "Netscape",
+                "appCodeName": "Mozilla",
+                "appVersion": (
+                    "5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/150.0.0.0 Safari/537.36"
+                ),
+                "appMinorVersion": 0,
+                "product": "Gecko",
+                "productSub": "20030107",
+                "vendor": "Google Inc.",
+                "vendorSub": "",
+                "buildID": 0,
+                "platform": "Win32",
+                "oscpu": 0,
+                "hardwareConcurrency": 8,
+                "language": "en-US",
+                "languages": nav_languages,
+                "systemLanguage": 0,
+                "userLanguage": 0,
+                "doNotTrack": None,
+                "msDoNotTrack": 0,
+                "cookieEnabled": True,
+                "geolocation": 1,
+                "vibrate": 1,
+                "maxTouchPoints": 0,
+                "webdriver": False,
+                "plugins": [],
+            },
+            separators=(",", ":"),
+        ),
+        "crc": json.dumps(
+            {
+                "window.chrome": {
+                    "app": {
+                        "isInstalled": False,
+                        "InstallState": {
+                            "DISABLED": "disabled",
+                            "INSTALLED": "installed",
+                            "NOT_INSTALLED": "not_installed",
+                        },
+                        "RunningState": {
+                            "CANNOT_RUN": "cannot_run",
+                            "READY_TO_RUN": "ready_to_run",
+                            "RUNNING": "running",
+                        },
+                    }
+                }
+            },
+            separators=(",", ":"),
+        ),
+        "t": token,
+        "u": user_token,
+    }
+    return urlencode(payload)
 
 
 def summarize_graphql_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

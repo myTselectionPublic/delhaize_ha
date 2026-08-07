@@ -149,6 +149,10 @@ OPERATION_IDS = {
         "ca68ca5448f81d8e7c203ec7c9d2544018e9ee02d2c16211120fecc3c52000ed"
     ),
 }
+CUSTOMER_ACCESS_COOKIE_NAMES = {
+    "grocery-roatc",
+    "v_cust",
+}
 
 LOGIN_EXTENSIONS = {
     "persistedQuery": {
@@ -596,9 +600,15 @@ class DelhaizeApi:
         before_cookies = dict(self._cookies)
         before_cookie_names = sorted(before_cookies)
         before_auth_cookies = _customer_auth_cookies(before_cookies)
+        old_access_cookies = {
+            name: self._cookies.pop(name)
+            for name in CUSTOMER_ACCESS_COOKIE_NAMES
+            if name in self._cookies
+        }
         _LOGGER.debug(
-            "Refreshing Delhaize customer auth cookies: device_session_present=%s cookie_names_before=%s",
+            "Refreshing Delhaize customer auth cookies: device_session_present=%s expired_access_cookies_removed=%s cookie_names_before=%s",
             DEVICE_SESSION_COOKIE_NAME in self._cookies,
+            sorted(old_access_cookies),
             before_cookie_names,
         )
         for attempt in range(2):
@@ -628,7 +638,15 @@ class DelhaizeApi:
             )
             cookie_changes = _cookie_change_summary(attempt_before_cookies, self._cookies)
             refresh_field_present = "refreshCustomerAuthCookies" in data
-            refreshed = refresh_field_present and _has_cookie_changes(auth_cookie_changes)
+            new_access_cookies = {
+                name: self._cookies[name]
+                for name in CUSTOMER_ACCESS_COOKIE_NAMES
+                if self._cookies.get(name)
+            }
+            refreshed = refresh_field_present and any(
+                old_access_cookies.get(name) != value
+                for name, value in new_access_cookies.items()
+            )
             _LOGGER.debug(
                 "Delhaize customer auth cookie refresh response: attempt=%s refreshed=%s auth_cookie_changes=%s cookie_changes=%s cookie_names_after=%s",
                 attempt + 1,

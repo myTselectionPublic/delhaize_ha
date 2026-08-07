@@ -9,9 +9,9 @@
     "error": {
       "cannot_connect": "Verbinden met Delhaize is mislukt",
       "captcha_required": "Delhaize heeft de sessie geweigerd omdat browserverificatie vereist is. Plak een nieuwe Cookie-header uit een browsersessie waarin je al bent aangemeld.",
-      "login_failed": "Aanmelden mislukt. Controleer de Cookie-header.",
+      "login_failed": "Aanmelden mislukt. Controleer de inloggegevens of Cookie-header.",
       "mfa_required": "Delhaize vereist extra verificatie. Plak een nieuwe Cookie-header uit een browsersessie waarin je al bent aangemeld.",
-      "missing_auth": "Geef een Cookie-header van een aangemelde browser op.",
+      "missing_auth": "Geef gebruikersnaam en wachtwoord op, of een Cookie-header van een aangemelde browser.",
       "unknown": "Onverwachte Delhaize API-fout"
     },
     "step": {
@@ -33,9 +33,11 @@
         "data": {
           "auto_activate_offers": "Persoonlijke aanbiedingen automatisch activeren",
           "cookie": "Cookie-header van aangemelde browser",
-          "language": "Taal"
+          "language": "Taal",
+          "password": "Wachtwoord",
+          "username": "Gebruikersnaam of e-mail"
         },
-        "description": "Plak de Cookie-header uit een Delhaize-browsersessie waarin je al bent aangemeld.",
+        "description": "Voer je Delhaize-inloggegevens in. Gebruik een Cookie-header van een aangemelde browser als Delhaize browserverificatie vereist.",
         "title": "Delhaize instellen"
       }
     }
@@ -75,7 +77,7 @@
           "auto_activate_offers": "Persoonlijke aanbiedingen automatisch activeren",
           "language": "Taal"
         },
-        "description": "Werk de Delhaize-instellingen bij. Authenticatievelden blijven verborgen, tenzij je ervoor kiest de Cookie-header bij te werken.",
+        "description": "Werk de Delhaize-instellingen bij en vervang eventueel de opgeslagen inloggegevens of Cookie-header.",
         "title": "Delhaize-opties"
       },
       "mfa": {

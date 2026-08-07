@@ -66,6 +66,9 @@ DelhaizeApi = delhaize_api.DelhaizeApi
 DelhaizeAuthError = delhaize_api.DelhaizeAuthError
 DelhaizeTokenRefreshRequired = delhaize_api.DelhaizeTokenRefreshRequired
 REFRESH_CUSTOMER_TOKEN_HASH = delhaize_api.REFRESH_CUSTOMER_TOKEN_HASH
+REFRESH_CUSTOMER_TOKEN_OPERATION_ID = (
+    delhaize_api.REFRESH_CUSTOMER_TOKEN_OPERATION_ID
+)
 REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIONS
 APOLLO_CLIENT_NAME = delhaize_api.APOLLO_CLIENT_NAME
 APOLLO_CLIENT_VERSION = delhaize_api.APOLLO_CLIENT_VERSION
@@ -97,6 +100,43 @@ def test_cookie_header_preserves_browser_order_and_updates_values() -> None:
     )
 
 
+def test_credentials_and_mfa_use_captured_persisted_operations() -> None:
+    """Credential authentication should match the browser's persisted requests."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse({"data": {"login": {}}}),
+                FakeResponse({"data": {"sendMfaOtpCode": {}}}),
+                FakeResponse({"data": {"login": {}}}),
+            ]
+        )
+        api = DelhaizeApi(session, cookie_header="deviceSessionId=device-1")
+
+        await api.login("person@example.com", "secret", lang="nl")
+        await api.send_login_mfa_otp_code("mfa-token", lang="nl")
+        await api.login_with_mfa("123456", "mfa-token", lang="nl")
+
+        assert [request["operation"] for request in session.requests] == [
+            "Login",
+            "SendLoginMfaOtpCode",
+            "LoginWithMFA",
+        ]
+        expected = [
+            ("Login", delhaize_api.LOGIN_EXTENSIONS),
+            ("SendLoginMfaOtpCode", delhaize_api.SEND_LOGIN_MFA_OTP_EXTENSIONS),
+            ("LoginWithMFA", delhaize_api.LOGIN_WITH_MFA_EXTENSIONS),
+        ]
+        for request, (operation, extensions) in zip(session.requests, expected):
+            assert "query" not in request["payload"]
+            assert request["payload"]["extensions"] == extensions
+            assert request["headers"]["X-APOLLO-OPERATION-ID"] == (
+                delhaize_api.OPERATION_IDS[operation]
+            )
+
+    asyncio.run(run_test())
+
+
 def test_coupon_book_query_avoids_removed_redemption_fields() -> None:
     """CouponBookPersonalOffer no longer exposes redemption date fields."""
     assert "redemptionStartDate" not in COUPON_BOOK_OFFERS_QUERY
@@ -119,9 +159,6 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
                         ]
                     }
                 ),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -151,15 +188,10 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
         assert customer["uid"] == "customer-1"
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
+        assert_refresh_customer_token_request(session.requests[1])
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -172,9 +204,6 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -203,16 +232,11 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[1])
+        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -225,9 +249,6 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     raw_set_cookie_headers=[
@@ -258,14 +279,10 @@ def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -326,7 +343,7 @@ def test_refresh_keeps_auth_cookie_when_later_set_cookie_deletes_domain_cookie()
 
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
 
     asyncio.run(run_test())
 
@@ -338,9 +355,6 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc"},
@@ -373,68 +387,15 @@ def test_refresh_retries_after_anti_bot_cookie_update_then_auth_cookie() -> None
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert_refresh_customer_token_request(session.requests[5])
-        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
-        assert "grocery-roatc=new-access-token" in session.requests[6]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[1])
+        assert_refresh_customer_token_request(session.requests[2])
+        assert "_abck=new-abck" in session.requests[2]["headers"]["Cookie"]
+        assert "grocery-roatc=new-access-token" in session.requests[3]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
-
-    asyncio.run(run_test())
-
-
-def test_refresh_uses_blueconic_random_rpc_id_from_script() -> None:
-    """The BlueConic RPC path follows script.js' random ++Ib calculation."""
-
-    async def run_test() -> None:
-        original_randint = delhaize_api.random.randint
-        delhaize_api.random.randint = lambda start, end: 339
-        session = FakeSession(
-            [
-                FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse(
-                    {"data": {"refreshCustomerAuthCookies": None}},
-                    cookies={"grocery-roatc": "new-access-token"},
-                ),
-                FakeResponse(
-                    {
-                        "data": {
-                            "loyaltyPoints": {"pointsBalance": 42},
-                            "nutriscoreBalance": {},
-                            "savings": {},
-                        }
-                    }
-                ),
-            ],
-            home_response=FakeResponse(
-                '<script id="blueconic-script" src="https://bc.delhaize.be/script.js"></script>'
-            ),
-            script_response=FakeResponse(
-                'var Ib=Math.floor(1E3*Math.random())+100;'
-                'resourceURL_POST:(I?BC_URL:W())+"/DG/"+Va+"/rest/rpc/"+ ++Ib'
-            ),
-        )
-        try:
-            api = DelhaizeApi(
-                session,
-                cookie_header=(
-                    "deviceSessionId=device-1; grocery-roatc=old-access-token; "
-                    "grocery-rortc=refresh-token"
-                ),
-            )
-
-            await api.get_loyalty_details()
-        finally:
-            delhaize_api.random.randint = original_randint
-
-        assert_blueconic_context_request(session.requests[4], rpc_id="339")
 
     asyncio.run(run_test())
 
@@ -486,9 +447,6 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
                         ]
                     }
                 ),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -518,16 +476,11 @@ def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> No
         assert customer["uid"] == "customer-1"
         assert [request["operation"] for request in session.requests] == [
             "CurrentCustomer",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
             "CurrentCustomer",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert "grocery-roatc=new-access-token" in session.requests[5]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[1])
+        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
     asyncio.run(run_test())
@@ -539,9 +492,6 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
     async def run_test() -> None:
         session = FakeSession(
             [
-                FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
             ]
@@ -560,12 +510,8 @@ def test_refresh_operation_does_not_loop_on_expired_token() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
         ]
-        assert_akamai_pixel_request(session.requests[1])
 
     asyncio.run(run_test())
 
@@ -577,9 +523,6 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"_abck": "new-abck", "ak_bmsc": "new-bmsc", "bm_sv": "new-bm"},
@@ -605,31 +548,24 @@ def test_refresh_rejects_when_only_anti_bot_cookies_change() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
             "RefreshCustomerToken",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert_get_subscriptions_request(session.requests[3])
-        assert_refresh_customer_token_request(session.requests[4])
-        assert_refresh_customer_token_request(session.requests[5])
-        assert "_abck=new-abck" in session.requests[5]["headers"]["Cookie"]
+        assert_refresh_customer_token_request(session.requests[1])
+        assert_refresh_customer_token_request(session.requests[2])
+        assert "_abck=new-abck" in session.requests[2]["headers"]["Cookie"]
         assert "_abck=new-abck" in api.get_cookie_header()
 
     asyncio.run(run_test())
 
 
-def test_refresh_initializes_missing_device_session_from_device_id() -> None:
-    """The deviceId query is stored as deviceSessionId before token refresh."""
+def test_refresh_does_not_add_browser_bootstrap_requests() -> None:
+    """The captured browser flow refreshes directly without bootstrap requests."""
 
     async def run_test() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
                 FakeResponse(
                     {"data": {"refreshCustomerAuthCookies": None}},
                     cookies={"grocery-roatc": "new-access-token"},
@@ -655,16 +591,10 @@ def test_refresh_initializes_missing_device_session_from_device_id() -> None:
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "BlueConicContext",
             "RefreshCustomerToken",
             "getIbizaAccountDetails",
         ]
-        assert_akamai_pixel_request(session.requests[1])
-        assert "deviceSessionId=device-1" in session.requests[3]["headers"]["Cookie"]
-        assert "deviceSessionId=device-1" in session.requests[4]["headers"]["Cookie"]
-        assert "deviceSessionId=device-1" in api.get_cookie_header()
+        assert "deviceSessionId=" not in api.get_cookie_header()
 
     asyncio.run(run_test())
 
@@ -676,9 +606,6 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
         session = FakeSession(
             [
                 FakeResponse({"errors": [{"message": "Access token expired"}]}),
-                FakeResponse({}),
-                FakeResponse({"data": {"deviceId": "device-1"}}),
-                FakeResponse({"data": {"getSubscriptions": []}}),
                 FakeResponse({"data": {}}, cookies={"_abck": "new-abck"}),
             ]
         )
@@ -702,12 +629,8 @@ def test_refresh_requires_customer_auth_refresh_field() -> None:
 
         assert [request["operation"] for request in session.requests] == [
             "getIbizaAccountDetails",
-            "AkamaiPixel",
-            "DeviceId",
-            "getSubscriptions",
             "RefreshCustomerToken",
         ]
-        assert_akamai_pixel_request(session.requests[1])
 
     asyncio.run(run_test())
 
@@ -919,7 +842,10 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     assert request["method"] == "POST"
     assert request["headers"]["x-do-refresh-token"] == "true"
     assert request["headers"]["X-APOLLO-OPERATION-NAME"] == "RefreshCustomerToken"
-    assert request["headers"]["X-APOLLO-OPERATION-ID"] == REFRESH_CUSTOMER_TOKEN_HASH
+    assert (
+        request["headers"]["X-APOLLO-OPERATION-ID"]
+        == REFRESH_CUSTOMER_TOKEN_OPERATION_ID
+    )
     assert request["headers"]["Apollographql-Client-Name"] == APOLLO_CLIENT_NAME
     assert request["headers"]["Apollographql-Client-Version"] == APOLLO_CLIENT_VERSION
     assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"

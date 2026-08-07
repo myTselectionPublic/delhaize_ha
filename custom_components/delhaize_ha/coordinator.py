@@ -88,9 +88,13 @@ class DelhaizeDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch the account summary from the API."""
         self._load_cookie_from_entry()
         self.api.language = self.config_entry.data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
-        return await self.api.fetch_summary(
-            auto_activate=self.config_entry.data.get(CONF_AUTO_ACTIVATE_OFFERS, False)
-        )
+        try:
+            return await self.api.fetch_summary(
+                auto_activate=self.config_entry.data.get(CONF_AUTO_ACTIVATE_OFFERS, False)
+            )
+        finally:
+            # Persist a successful refresh even if a later summary request fails.
+            self._persist_cookie_if_changed()
 
     async def _login_with_stored_credentials(self) -> None:
         """Create a fresh session from stored credentials."""

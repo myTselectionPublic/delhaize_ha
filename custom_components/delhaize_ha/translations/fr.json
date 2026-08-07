@@ -9,9 +9,9 @@
     "error": {
       "cannot_connect": "Échec de la connexion à Delhaize",
       "captcha_required": "Delhaize a refusé la session car une vérification dans le navigateur est requise. Collez un nouvel en-tête Cookie provenant d'une session de navigateur déjà connectée.",
-      "login_failed": "Échec de la connexion. Vérifiez l'en-tête Cookie.",
+      "login_failed": "Échec de la connexion. Vérifiez les identifiants ou l'en-tête Cookie.",
       "mfa_required": "Delhaize exige une vérification supplémentaire. Collez un nouvel en-tête Cookie provenant d'une session de navigateur déjà connectée.",
-      "missing_auth": "Fournissez un en-tête Cookie provenant d'un navigateur connecté.",
+      "missing_auth": "Fournissez le nom d'utilisateur et le mot de passe, ou un en-tête Cookie provenant d'un navigateur connecté.",
       "unknown": "Erreur inattendue de l'API Delhaize"
     },
     "step": {
@@ -33,9 +33,11 @@
         "data": {
           "auto_activate_offers": "Activer automatiquement les offres personnelles",
           "cookie": "En-tête Cookie d'un navigateur connecté",
-          "language": "Langue"
+          "language": "Langue",
+          "password": "Mot de passe",
+          "username": "Nom d'utilisateur ou e-mail"
         },
-        "description": "Collez l'en-tête Cookie provenant d'une session de navigateur Delhaize déjà connectée.",
+        "description": "Saisissez vos identifiants Delhaize. Si Delhaize exige une vérification dans le navigateur, utilisez plutôt l'en-tête Cookie d'une session connectée.",
         "title": "Configurer Delhaize"
       }
     }
@@ -75,7 +77,7 @@
           "auto_activate_offers": "Activer automatiquement les offres personnelles",
           "language": "Langue"
         },
-        "description": "Mettez à jour les paramètres Delhaize. Les champs d'authentification restent masqués sauf si vous choisissez de mettre à jour l'en-tête Cookie.",
+        "description": "Mettez à jour les paramètres Delhaize et, si nécessaire, les identifiants ou l'en-tête Cookie enregistrés.",
         "title": "Options Delhaize"
       },
       "mfa": {

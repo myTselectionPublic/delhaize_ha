@@ -18,9 +18,10 @@ from ..const import API_URL, BASE_URL, DEFAULT_LANGUAGE
 
 _LOGGER = logging.getLogger(__name__)
 
-AKAMAI_PIXEL_URL = f"{BASE_URL}/akam/13/pixel_36d02966"
 TOKEN_REFRESH_ERROR_CODE = "PENDING_TOKEN_REFRESH"
 DEVICE_SESSION_COOKIE_NAME = "deviceSessionId"
+APOLLO_CLIENT_NAME = "be-dll-web-stores"
+APOLLO_CLIENT_VERSION = "75fd109159629c98910d73fd4b29cc162765c558"
 CUSTOMER_AUTH_COOKIE_NAMES = {
     "grocery-roatc",
     "grocery-rortc",
@@ -127,6 +128,9 @@ query DeviceId {
 REFRESH_CUSTOMER_TOKEN_HASH = (
     "ec4ea2caaa6c8fc1a7b139406f910e8b9acb44301ae753fef7b02631043b552c"
 )
+REFRESH_CUSTOMER_TOKEN_OPERATION_ID = (
+    "3d308f9cf01b362a8f2a91aca53c4170c0f505499ad1b980d779ada03bd4f57f"
+)
 
 REFRESH_CUSTOMER_TOKEN_EXTENSIONS = {
     "persistedQuery": {
@@ -135,14 +139,39 @@ REFRESH_CUSTOMER_TOKEN_EXTENSIONS = {
     }
 }
 
-GET_SUBSCRIPTIONS_HASH = (
-    "4954d47094692ad47185f0c577fdf30b55f8f0f34c3ede1dbb542a41314dde31"
-)
+OPERATION_IDS = {
+    "RefreshCustomerToken": REFRESH_CUSTOMER_TOKEN_OPERATION_ID,
+    "Login": "dc197d47830c46cd433ba4636c471a374861bd770e4c88378947ceb2b200ba56",
+    "SendLoginMfaOtpCode": (
+        "3039942480cae6c3f1e536a0ac4614771d072c88ce4d8a0fe113418f4ce9e5b6"
+    ),
+    "LoginWithMFA": (
+        "ca68ca5448f81d8e7c203ec7c9d2544018e9ee02d2c16211120fecc3c52000ed"
+    ),
+}
 
-GET_SUBSCRIPTIONS_EXTENSIONS = {
+LOGIN_EXTENSIONS = {
     "persistedQuery": {
         "version": 1,
-        "sha256Hash": GET_SUBSCRIPTIONS_HASH,
+        "sha256Hash": (
+            "64a9ef1f232228086f6c34c0b0a7aff5dc8d1f11d89f690733dc7561b67a5364"
+        ),
+    }
+}
+SEND_LOGIN_MFA_OTP_EXTENSIONS = {
+    "persistedQuery": {
+        "version": 1,
+        "sha256Hash": (
+            "358dbe646f693bbc90029b49a112877a5caf9d5c08af4b2bbd6744b6d4ce1e33"
+        ),
+    }
+}
+LOGIN_WITH_MFA_EXTENSIONS = {
+    "persistedQuery": {
+        "version": 1,
+        "sha256Hash": (
+            "05e41323c4567346fdaf0701b218380437033bcd8f58ca38dc637146c4d626b6"
+        ),
     }
 }
 
@@ -231,8 +260,6 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       moreDetails
       activationStartDate
       activationEndDate
-      redemptionStartDate
-      redemptionEndDate
     }
     personalOffers {
       id
@@ -246,8 +273,6 @@ query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) 
       moreDetails
       activationStartDate
       activationEndDate
-      redemptionStartDate
-      redemptionEndDate
     }
   }
 }
@@ -492,20 +517,22 @@ class DelhaizeApi:
             remember,
             bool(self.get_cookie_header()),
         )
-        await self.get_device_id()
+        if DEVICE_SESSION_COOKIE_NAME not in self._cookies:
+            await self.get_device_id()
         variables = {
             "username": username,
             "password": password,
-            "termsAndConditionsAccepted": False,
             "termsAndConditionsValidation": False,
             "remember": remember,
-            "prospect_token": None,
             "lang": lang or self.language,
             "captcha": None,
             "mobile": False,
-            "country": "BE",
         }
-        return await self.graphql("Login", LOGIN_MUTATION, variables=variables)
+        return await self.graphql(
+            "Login",
+            variables=variables,
+            extensions=LOGIN_EXTENSIONS,
+        )
 
     async def send_login_mfa_otp_code(
         self,
@@ -529,8 +556,8 @@ class DelhaizeApi:
         }
         return await self.graphql(
             "SendLoginMfaOtpCode",
-            SEND_LOGIN_MFA_OTP_MUTATION,
             variables=variables,
+            extensions=SEND_LOGIN_MFA_OTP_EXTENSIONS,
         )
 
     async def login_with_mfa(
@@ -552,19 +579,20 @@ class DelhaizeApi:
         variables = {
             "otpCode": otp_code,
             "mfaToken": mfa_token,
-            "termsAndConditionsAccepted": False,
             "termsAndConditionsValidation": False,
             "remember": remember,
             "lang": lang or self.language,
             "captcha": None,
             "mobile": False,
-            "country": "BE",
         }
-        return await self.graphql("LoginWithMFA", LOGIN_WITH_MFA_MUTATION, variables=variables)
+        return await self.graphql(
+            "LoginWithMFA",
+            variables=variables,
+            extensions=LOGIN_WITH_MFA_EXTENSIONS,
+        )
 
     async def refresh_customer_auth_cookies(self) -> bool:
         """Refresh Delhaize customer auth cookies when a refresh cookie is present."""
-        await self._prepare_customer_refresh_context()
         before_cookies = dict(self._cookies)
         before_cookie_names = sorted(before_cookies)
         before_auth_cookies = _customer_auth_cookies(before_cookies)
@@ -580,7 +608,6 @@ class DelhaizeApi:
                     "RefreshCustomerToken",
                     extensions=REFRESH_CUSTOMER_TOKEN_EXTENSIONS,
                     extra_headers={
-                        "X-APOLLO-OPERATION-ID": REFRESH_CUSTOMER_TOKEN_HASH,
                         "x-do-refresh-token": "true",
                     },
                     allow_token_refresh=False,
@@ -626,78 +653,6 @@ class DelhaizeApi:
             )
 
         raise DelhaizeAuthError("Delhaize refresh did not update customer auth cookies")
-
-    async def _prepare_customer_refresh_context(self) -> None:
-        """Mimic the browser calls that establish customer refresh context."""
-        try:
-            await self._send_akamai_pixel()
-        except DelhaizeApiError as err:
-            _LOGGER.debug(
-                "Could not send Delhaize Akamai pixel before auth refresh: error=%s errors=%s cookie_names=%s",
-                err,
-                summarize_graphql_errors(err.errors),
-                self._cookie_names(),
-            )
-
-        if self._has_customer_refresh_cookie():
-            try:
-                await self.get_device_id(allow_token_refresh=False)
-            except DelhaizeApiError as err:
-                _LOGGER.debug(
-                    "Could not refresh Delhaize device session before auth refresh: error=%s errors=%s cookie_names=%s",
-                    err,
-                    summarize_graphql_errors(err.errors),
-                    self._cookie_names(),
-                )
-
-        try:
-            await self.graphql(
-                "getSubscriptions",
-                variables={"customerId": "current", "lang": self.language},
-                extensions=GET_SUBSCRIPTIONS_EXTENSIONS,
-                allow_token_refresh=False,
-                method="GET",
-            )
-        except DelhaizeApiError as err:
-            _LOGGER.debug(
-                "Delhaize subscription bootstrap before refresh did not return data: error=%s errors=%s cookie_names=%s",
-                err,
-                summarize_graphql_errors(err.errors),
-                self._cookie_names(),
-            )
-
-    async def _send_akamai_pixel(self) -> None:
-        """Send the browser anti-bot pixel that often precedes token refresh."""
-        headers = self._browser_context_headers(
-            content_type="application/x-www-form-urlencoded"
-        )
-        payload = _akamai_pixel_payload(self.get_cookie_header(), self.language)
-        _LOGGER.debug(
-            "Sending Delhaize Akamai pixel before auth refresh: cookie_present=%s",
-            "Cookie" in headers,
-        )
-        try:
-            async with self.websession.post(
-                AKAMAI_PIXEL_URL,
-                data=payload,
-                headers=headers,
-                timeout=30,
-            ) as response:
-                await response.text()
-                response_cookies = _response_cookie_items(response)
-                self._store_response_cookies(response_cookies)
-                status = response.status
-                cookie_names = sorted(response_cookies)
-        except (ClientError, TimeoutError) as err:
-            raise DelhaizeRequestError(
-                f"Could not reach Delhaize Akamai pixel: {err}"
-            ) from err
-
-        _LOGGER.debug(
-            "Received Delhaize Akamai pixel response: status=%s set_cookies=%s",
-            status,
-            cookie_names,
-        )
 
     async def current_customer(self, *, mode: str = "FULL") -> dict[str, Any]:
         """Return the logged-in customer."""
@@ -1118,6 +1073,9 @@ class DelhaizeApi:
         )
         headers["X-APOLLO-OPERATION-NAME"] = operation_name
         headers["x-default-gql-refresh-token-disabled"] = "true"
+        operation_id = OPERATION_IDS.get(operation_name)
+        if operation_id:
+            headers["X-APOLLO-OPERATION-ID"] = operation_id
         if extra_headers:
             headers.update(extra_headers)
         return headers
@@ -1140,8 +1098,16 @@ class DelhaizeApi:
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/150.0.0.0 Safari/537.36"
+                "Chrome/151.0.0.0 Safari/537.36"
             ),
+            "Apollographql-Client-Name": APOLLO_CLIENT_NAME,
+            "Apollographql-Client-Version": APOLLO_CLIENT_VERSION,
+            "Sec-CH-UA": (
+                '"Not=A?Brand";v="99", "Google Chrome";v="151", '
+                '"Chromium";v="151"'
+            ),
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
         }
         if content_type:
             headers["Content-Type"] = content_type
@@ -1158,8 +1124,8 @@ class DelhaizeApi:
             "sendloginmfaotpcode",
             "getloginwithssolink",
         }:
-            return f"{BASE_URL}/{self.language}/login"
-        return f"{BASE_URL}/{self.language}/my-account/dashboard"
+            return f"{BASE_URL}/login"
+        return f"{BASE_URL}/"
 
     def _store_response_cookies(self, response_cookies: dict[str, str]) -> None:
         """Store cookies returned by Delhaize."""
@@ -1395,14 +1361,22 @@ def _cookie_change_summary(
 
 def _response_cookie_items(response: ClientResponse) -> dict[str, str]:
     """Return response cookies, including raw Set-Cookie headers if needed."""
-    cookies = {key: morsel.value for key, morsel in response.cookies.items()}
-
     headers = getattr(response, "headers", None)
     getall = getattr(headers, "getall", None)
     raw_headers = getall("Set-Cookie", []) if callable(getall) else []
+    if not raw_headers:
+        return {key: morsel.value for key, morsel in response.cookies.items()}
 
+    cookies: dict[str, str] = {}
+    nonempty_response_cookies: set[str] = set()
     for header in raw_headers:
-        cookies.update(_cookies_from_set_cookie_header(str(header)))
+        parsed = _cookies_from_set_cookie_header(str(header))
+        for key, value in parsed.items():
+            if value:
+                cookies[key] = value
+                nonempty_response_cookies.add(key)
+            elif key not in nonempty_response_cookies:
+                cookies[key] = ""
 
     return cookies
 

@@ -59,6 +59,7 @@ AUTH_METHOD_OPTIONS = [
 
 AUTH_UPDATE_OPTIONS = [
     {"value": AUTH_UPDATE_KEEP, "label": "Keep current authentication"},
+    {"value": AUTH_METHOD_CREDENTIALS, "label": "Update username and password"},
     {"value": AUTH_METHOD_COOKIE, "label": "Update Cookie header"},
 ]
 
@@ -70,7 +71,14 @@ def _user_schema(user_input: dict[str, Any] | None = None) -> vol.Schema:
     defaults = user_input or {}
     return vol.Schema(
         {
-            vol.Required(
+            vol.Optional(
+                CONF_USERNAME,
+                default=defaults.get(CONF_USERNAME, ""),
+            ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
+            vol.Optional(CONF_PASSWORD): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+            vol.Optional(
                 CONF_COOKIE,
                 default=defaults.get(CONF_COOKIE, ""),
             ): TextSelector(

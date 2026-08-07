@@ -9,9 +9,9 @@
     "error": {
       "cannot_connect": "Failed to connect to Delhaize",
       "captcha_required": "Delhaize rejected the session because browser verification is required. Paste a fresh Cookie header from an already logged-in browser session.",
-      "login_failed": "Login failed. Check the Cookie header.",
+      "login_failed": "Login failed. Check the supplied credentials or Cookie header.",
       "mfa_required": "Delhaize requires additional verification. Paste a fresh Cookie header from an already logged-in browser session.",
-      "missing_auth": "Provide a logged-in browser Cookie header.",
+      "missing_auth": "Provide both username and password, or a logged-in browser Cookie header.",
       "unknown": "Unexpected Delhaize API error"
     },
     "step": {
@@ -33,9 +33,11 @@
         "data": {
           "auto_activate_offers": "Automatically activate personal offers",
           "cookie": "Logged-in browser Cookie header",
-          "language": "Language"
+          "language": "Language",
+          "password": "Password",
+          "username": "Username or email"
         },
-        "description": "Paste the Cookie header from an already logged-in Delhaize browser session.",
+        "description": "Enter your Delhaize credentials. If Delhaize requires browser captcha verification, use a logged-in browser Cookie header instead.",
         "title": "Set up Delhaize"
       }
     }
@@ -75,7 +77,7 @@
           "auto_activate_offers": "Automatically activate personal offers",
           "language": "Language"
         },
-        "description": "Update Delhaize settings. Authentication fields stay hidden unless you choose to update the Cookie header.",
+        "description": "Update Delhaize settings and optionally replace the stored credentials or Cookie header.",
         "title": "Delhaize options"
       },
       "mfa": {

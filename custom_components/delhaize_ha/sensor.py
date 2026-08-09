@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -312,6 +313,7 @@ def _personal_offer_product_discount_list_for_offer(
 
     points = _int_or_none(offer.get("points"))
     points_value = _points_to_euro(points)
+    required_quantity = _personal_offer_required_quantity(offer)
     offer_label = (
         _clean_label(offer.get("name"))
         or _clean_label(offer.get("promotion"))
@@ -325,7 +327,12 @@ def _personal_offer_product_discount_list_for_offer(
         original_price_value = _price_amount(price.get("wasPrice"))
         if original_price_value is None:
             original_price_value = _price_amount(price.get("value"))
-        discount_percentage = _value_percentage(points_value, original_price_value)
+        qualifying_price_value = (
+            round(original_price_value * required_quantity, 2)
+            if original_price_value is not None
+            else None
+        )
+        discount_percentage = _value_percentage(points_value, qualifying_price_value)
         products.append(
             _without_none(
                 {
@@ -335,6 +342,12 @@ def _personal_offer_product_discount_list_for_offer(
                     "product_code": _clean_label(product.get("code")),
                     "points": points,
                     "points_value": points_value,
+                    "required_quantity": (
+                        required_quantity if required_quantity > 1 else None
+                    ),
+                    "qualifying_price_value": (
+                        qualifying_price_value if required_quantity > 1 else None
+                    ),
                     "original_price": _clean_label(price.get("wasPrice"))
                     or _clean_label(price.get("formattedValue")),
                     "original_price_value": original_price_value,
@@ -346,6 +359,27 @@ def _personal_offer_product_discount_list_for_offer(
             )
         )
     return products
+
+
+def _personal_offer_required_quantity(offer: dict[str, Any]) -> int:
+    """Return the item count required by labels such as '100 punten voor 2'."""
+    label = " ".join(
+        value
+        for value in (
+            _clean_label(offer.get("name")),
+            _clean_label(offer.get("promotion")),
+        )
+        if value
+    )
+    match = re.search(
+        r"\b(?:punten|points?)\s+(?:voor|pour)\s+(\d+)\b",
+        label,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return 1
+    quantity = _int_or_none(match.group(1))
+    return quantity if quantity is not None and quantity > 1 else 1
 
 
 def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:

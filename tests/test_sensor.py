@@ -159,3 +159,48 @@ def test_personal_offer_products_fall_back_to_current_price() -> None:
         "discount_percentage": 25.0,
         "discount_percentage_formatted": "25%",
     }
+
+
+def test_personal_offer_percentage_uses_required_item_quantity() -> None:
+    """Points awarded for two items should be divided by both items' price."""
+    offer = {
+        "name": "100 punten voor 2",
+        "points": 100,
+        "products": [
+            {
+                "code": "multi-1",
+                "name": "Multi-buy product",
+                "price": {"formattedValue": "€ 4,00", "value": 4},
+            }
+        ],
+    }
+
+    assert sensor._personal_offer_product_discount_list_for_offer(offer)[0] == {
+        "offer": "100 punten voor 2",
+        "product": "Multi-buy product",
+        "product_code": "multi-1",
+        "points": 100,
+        "points_value": 1.0,
+        "required_quantity": 2,
+        "qualifying_price_value": 8.0,
+        "original_price": "€ 4,00",
+        "original_price_value": 4.0,
+        "discount_percentage": 12.5,
+        "discount_percentage_formatted": "12.5%",
+    }
+
+
+def test_personal_offer_quantity_can_span_name_and_promotion() -> None:
+    """The points and quantity text may be split across offer fields."""
+    offer = {
+        "name": "150 punten",
+        "promotion": "voor 3 producten",
+        "points": 150,
+        "products": [{"price": {"value": 2}}],
+    }
+
+    product = sensor._personal_offer_product_discount_list_for_offer(offer)[0]
+
+    assert product["required_quantity"] == 3
+    assert product["qualifying_price_value"] == 6.0
+    assert product["discount_percentage"] == 25.0

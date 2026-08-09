@@ -98,6 +98,7 @@ content: |
   {% set account = (state_attr(available_entity, 'friendly_name') or available_entity)
     | replace(' Personal offers available', '') %}
   {% set personal = state_attr(activated_entity, 'description_list') or [] %}
+  {% set personal_products = state_attr(available_entity, 'personal_offer_product_discount_list') or [] %}
   {% set flash = state_attr(available_entity, 'flash_offer_list') or [] %}
   {% set coupon_personal = state_attr(available_entity, 'coupon_book_personal_offer_list') or [] %}
   {% set burnable = state_attr(burnable_entity, 'product_discount_list') or [] %}
@@ -114,6 +115,15 @@ content: |
   {% endfor %}
   {% else %}
   No personal e-Deals found.
+  {% endif %}
+
+  {% if personal_products %}
+  **Personal promotion value**
+
+  | Product | Offer | Points value | Original | Discount | Status |
+  |---|---|---:|---:|---:|---:|
+  {% for product in personal_products %}| {{ product.get('product', '-') | replace('|',' ') }} | {{ product.get('offer', '-') | replace('|',' ') }} | €{{ product.get('points_value', '-') }} / {{ product.get('points', '-') }} pts | {{ product.get('original_price', '-') }} | {{ product.get('discount_percentage_formatted', '-') }} | {{ 'Active' if product.get('active') else 'Available' }} |
+  {% endfor %}
   {% endif %}
 
   {% if coupon_personal %}
@@ -153,7 +163,7 @@ content: |
   {% endfor %}
 ```
 
-The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For burnable offers, the integration exposes `discount_points`, `point_price_value`, and `discount_percentage`, where `point_price_value` assumes 1 point = €0.01 and `discount_percentage` is calculated as point price divided by the original product price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
+The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For personal promotions, `personal_offer_product_discount_list` exposes every returned product, its original price, the euro value of the awarded points, and `discount_percentage`. The percentage is calculated as `(points × €0.01) / original price × 100`. For burnable offers, `point_price_value` assumes 1 point = €0.01 and the discount is calculated from the points purchase price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
 
 ## Services
 

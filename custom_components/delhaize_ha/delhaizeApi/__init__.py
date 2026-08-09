@@ -241,6 +241,24 @@ query PersonalOffersV2($lang: String!) {
       promotionType
       offerRedeemed
       basketPromo
+      range
+      productRangeSize
+      hasMoreProducts
+      products {
+        code
+        name
+        manufacturerName
+        manufacturerSubBrandName
+        available
+        url
+        price {
+          currencyIso
+          currencySymbol
+          formattedValue
+          value
+          wasPrice
+        }
+      }
     }
   }
 }

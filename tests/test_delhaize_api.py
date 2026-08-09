@@ -73,6 +73,14 @@ REFRESH_CUSTOMER_TOKEN_EXTENSIONS = delhaize_api.REFRESH_CUSTOMER_TOKEN_EXTENSIO
 APOLLO_CLIENT_NAME = delhaize_api.APOLLO_CLIENT_NAME
 APOLLO_CLIENT_VERSION = delhaize_api.APOLLO_CLIENT_VERSION
 COUPON_BOOK_OFFERS_QUERY = delhaize_api.COUPON_BOOK_OFFERS_QUERY
+PERSONAL_OFFERS_QUERY = delhaize_api.PERSONAL_OFFERS_QUERY
+
+
+def test_personal_offers_query_requests_products_and_original_prices() -> None:
+    """Personal offers should fetch eligible products with price information."""
+    assert "products {" in PERSONAL_OFFERS_QUERY
+    assert "formattedValue" in PERSONAL_OFFERS_QUERY
+    assert "wasPrice" in PERSONAL_OFFERS_QUERY
 
 
 def test_cookie_header_preserves_browser_order_and_updates_values() -> None:

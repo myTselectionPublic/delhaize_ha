@@ -268,13 +268,84 @@ def _offer_detail(offer: dict[str, Any]) -> dict[str, Any]:
             "promotion": _clean_label(offer.get("promotion")),
             "promotion_type": _clean_label(offer.get("promotionType")),
             "available_until": _offer_available_until(offer),
+            "product_discount_list": _personal_offer_product_discount_list_for_offer(
+                offer
+            ),
         }
     )
 
 
 def _offer_count_attributes(data: dict[str, Any]) -> dict[str, Any]:
     """Return offer attributes used by the dashboard Markdown example."""
-    return _coupon_book_flash_offer_attributes(data)
+    return _without_none(
+        {
+            **_coupon_book_flash_offer_attributes(data),
+            "personal_offer_product_discount_list": (
+                _personal_offer_product_discount_list(data)
+            ),
+        }
+    )
+
+
+def _personal_offer_product_discount_list(
+    data: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Return products earning personal-offer points and their value percentage."""
+    offers = _visible_personal_offers(data)
+    if offers is None:
+        return None
+
+    return [
+        product
+        for offer in offers
+        for product in _personal_offer_product_discount_list_for_offer(offer)
+    ]
+
+
+def _personal_offer_product_discount_list_for_offer(
+    offer: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return product value rows for one personal points offer."""
+    offer_products = offer.get("products")
+    if not isinstance(offer_products, list):
+        return []
+
+    points = _int_or_none(offer.get("points"))
+    points_value = _points_to_euro(points)
+    offer_label = (
+        _clean_label(offer.get("name"))
+        or _clean_label(offer.get("promotion"))
+        or "Personal offer"
+    )
+    products: list[dict[str, Any]] = []
+    for product in offer_products:
+        if not isinstance(product, dict):
+            continue
+        price = product.get("price") if isinstance(product.get("price"), dict) else {}
+        original_price_value = _price_amount(price.get("wasPrice"))
+        if original_price_value is None:
+            original_price_value = _price_amount(price.get("value"))
+        discount_percentage = _value_percentage(points_value, original_price_value)
+        products.append(
+            _without_none(
+                {
+                    "offer": offer_label,
+                    "active": offer.get("active"),
+                    "product": _clean_label(product.get("name")),
+                    "product_code": _clean_label(product.get("code")),
+                    "points": points,
+                    "points_value": points_value,
+                    "original_price": _clean_label(price.get("wasPrice"))
+                    or _clean_label(price.get("formattedValue")),
+                    "original_price_value": original_price_value,
+                    "discount_percentage": discount_percentage,
+                    "discount_percentage_formatted": _format_percentage(
+                        discount_percentage
+                    ),
+                }
+            )
+        )
+    return products
 
 
 def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:
@@ -392,6 +463,8 @@ def _burnable_offer_discount_product_list(
                         "offer": _clean_label(offer.get("name")),
                         "discount_points": discount_points,
                         "point_price_value": point_price_value,
+                        "original_price_value": original_price_value,
+                        "discount_percentage": discount_percentage,
                         "discount_percentage_formatted": _format_percentage(
                             discount_percentage
                         ),
@@ -443,10 +516,17 @@ def _points_to_euro(points: int | None) -> float | None:
 
 
 def _percentage(value: float | None, total: float | None) -> float | None:
-    """Return value as a percentage of total."""
+    """Return the saving when value is the discounted price and total is original."""
     if value is None or total in (None, 0):
         return None
     return round((1 - (value / total)) * 100, 1)
+
+
+def _value_percentage(value: float | None, total: float | None) -> float | None:
+    """Return a reward value as a percentage of the original price."""
+    if value is None or total in (None, 0):
+        return None
+    return round((value / total) * 100, 1)
 
 
 def _format_percentage(value: float | None) -> str | None:

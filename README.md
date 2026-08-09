@@ -163,7 +163,7 @@ content: |
   {% endfor %}
 ```
 
-The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For personal promotions, `personal_offer_product_discount_list` exposes every returned product, its original price, the euro value of the awarded points, and `discount_percentage`. The percentage is calculated as `(points × €0.01) / original price × 100`. For burnable offers, `point_price_value` assumes 1 point = €0.01 and the discount is calculated from the points purchase price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
+The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For personal promotions, `personal_offer_product_discount_list` exposes every returned product, its original price, the euro value of the awarded points, and `discount_percentage`. When the personal-offer response omits a product price or part of the product range, the integration also fetches the product listing used by Delhaize's offer detail page. The percentage is calculated as `(points × €0.01) / original price × 100`. For burnable offers, `point_price_value` assumes 1 point = €0.01 and the discount is calculated from the points purchase price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
 
 ## Services
 

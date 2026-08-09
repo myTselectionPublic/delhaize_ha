@@ -74,6 +74,7 @@ APOLLO_CLIENT_NAME = delhaize_api.APOLLO_CLIENT_NAME
 APOLLO_CLIENT_VERSION = delhaize_api.APOLLO_CLIENT_VERSION
 COUPON_BOOK_OFFERS_QUERY = delhaize_api.COUPON_BOOK_OFFERS_QUERY
 PERSONAL_OFFERS_QUERY = delhaize_api.PERSONAL_OFFERS_QUERY
+PERSONAL_OFFER_PRODUCTS_QUERY = delhaize_api.PERSONAL_OFFER_PRODUCTS_QUERY
 
 
 def test_personal_offers_query_requests_products_and_original_prices() -> None:
@@ -81,6 +82,123 @@ def test_personal_offers_query_requests_products_and_original_prices() -> None:
     assert "products {" in PERSONAL_OFFERS_QUERY
     assert "formattedValue" in PERSONAL_OFFERS_QUERY
     assert "wasPrice" in PERSONAL_OFFERS_QUERY
+
+
+def test_personal_offer_product_query_matches_detail_page_request() -> None:
+    """The price fallback should use the product listing opened by the website."""
+    assert "productList(" in PERSONAL_OFFER_PRODUCTS_QUERY
+    assert "productListingType" in PERSONAL_OFFER_PRODUCTS_QUERY
+    assert "offerId" in PERSONAL_OFFER_PRODUCTS_QUERY
+    assert "pagination" in PERSONAL_OFFER_PRODUCTS_QUERY
+    assert "wasPrice" in PERSONAL_OFFER_PRODUCTS_QUERY
+
+
+def test_personal_offers_fetches_missing_product_prices() -> None:
+    """A product shell from PersonalOffersV2 should be enriched from ProductList."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse(
+                    {
+                        "data": {
+                            "personalOffersV2": {
+                                "personalOfferList": [
+                                    {
+                                        "id": "offer-1",
+                                        "name": "75 bonus points",
+                                        "points": 75,
+                                        "productRangeSize": 1,
+                                        "products": [
+                                            {"code": "123", "name": "Product shell"}
+                                        ],
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "productList": {
+                                "products": [
+                                    {
+                                        "code": "123",
+                                        "name": "Priced product",
+                                        "price": {
+                                            "formattedValue": "€ 3,00",
+                                            "value": 3,
+                                        },
+                                    }
+                                ],
+                                "pagination": {"currentPage": 0, "totalPages": 1},
+                            }
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(session, cookie_header="grocery-roatc=access-token")
+
+        offers = await api.get_personal_offers()
+
+        product = offers["personalOfferList"][0]["products"][0]
+        assert product["name"] == "Priced product"
+        assert product["price"]["value"] == 3
+        assert [request["operation"] for request in session.requests] == [
+            "PersonalOffersV2",
+            "ProductList",
+        ]
+        assert session.requests[1]["payload"]["variables"] == {
+            "productListingType": "PERSONAL_OFFER",
+            "lang": "nl",
+            "offerId": "offer-1",
+            "lazyLoadCount": 20,
+            "pageNumber": 0,
+        }
+
+    asyncio.run(run_test())
+
+
+def test_personal_offers_keeps_complete_inline_products_without_extra_request() -> None:
+    """Already priced complete products should not add a ProductList request."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse(
+                    {
+                        "data": {
+                            "personalOffersV2": {
+                                "personalOfferList": [
+                                    {
+                                        "id": "offer-1",
+                                        "points": 75,
+                                        "productRangeSize": 1,
+                                        "products": [
+                                            {
+                                                "code": "123",
+                                                "price": {"value": 3},
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                )
+            ]
+        )
+        api = DelhaizeApi(session, cookie_header="grocery-roatc=access-token")
+
+        await api.get_personal_offers()
+
+        assert [request["operation"] for request in session.requests] == [
+            "PersonalOffersV2"
+        ]
+
+    asyncio.run(run_test())
 
 
 def test_cookie_header_preserves_browser_order_and_updates_values() -> None:

@@ -264,6 +264,45 @@ query PersonalOffersV2($lang: String!) {
 }
 """
 
+PERSONAL_OFFER_PRODUCTS_QUERY = """
+query ProductList(
+  $productListingType: String!
+  $lang: String
+  $offerId: String
+  $lazyLoadCount: Int
+  $pageNumber: Int
+) {
+  productList(
+    productListingType: $productListingType
+    lang: $lang
+    offerId: $offerId
+    lazyLoadCount: $lazyLoadCount
+    pageNumber: $pageNumber
+  ) {
+    products {
+      code
+      name
+      manufacturerName
+      manufacturerSubBrandName
+      available
+      url
+      price {
+        currencyIso
+        currencySymbol
+        formattedValue
+        value
+        wasPrice
+      }
+    }
+    pagination {
+      currentPage
+      totalResults
+      totalPages
+    }
+  }
+}
+"""
+
 COUPON_BOOK_OFFERS_QUERY = """
 query CouponBookOffers($activationStatus: String, $lang: String, $mode: String) {
   couponBookOffers(activationStatus: $activationStatus, lang: $lang, mode: $mode) {
@@ -731,7 +770,81 @@ class DelhaizeApi:
             PERSONAL_OFFERS_QUERY,
             variables={"lang": lang or self.language},
         )
-        return data.get("personalOffersV2") or {}
+        offers = data.get("personalOffersV2") or {}
+        await self._add_missing_personal_offer_products(offers, lang=lang)
+        return offers
+
+    async def get_personal_offer_products(
+        self,
+        offer_id: str,
+        *,
+        lang: str | None = None,
+        expected_count: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return all products shown when a personal e-deal is opened."""
+        page_size = max(expected_count or 0, 20)
+        products: list[dict[str, Any]] = []
+        page_number = 0
+        total_pages = 1
+        while page_number < total_pages:
+            data = await self.graphql(
+                "ProductList",
+                PERSONAL_OFFER_PRODUCTS_QUERY,
+                variables={
+                    "productListingType": "PERSONAL_OFFER",
+                    "lang": lang or self.language,
+                    "offerId": offer_id,
+                    "lazyLoadCount": page_size,
+                    "pageNumber": page_number,
+                },
+            )
+            product_list = data.get("productList") or {}
+            page_products = product_list.get("products")
+            if isinstance(page_products, list):
+                products.extend(
+                    product for product in page_products if isinstance(product, dict)
+                )
+            pagination = product_list.get("pagination")
+            if isinstance(pagination, dict):
+                returned_total_pages = pagination.get("totalPages")
+                if isinstance(returned_total_pages, int) and returned_total_pages > 0:
+                    total_pages = returned_total_pages
+            page_number += 1
+        return products
+
+    async def _add_missing_personal_offer_products(
+        self,
+        personal_offers: dict[str, Any],
+        *,
+        lang: str | None = None,
+    ) -> None:
+        """Populate products whose prices are deferred to the offer detail page."""
+        offer_list = personal_offers.get("personalOfferList")
+        if not isinstance(offer_list, list):
+            return
+
+        for offer in offer_list:
+            if not isinstance(offer, dict) or not _personal_offer_needs_products(offer):
+                continue
+            offer_id = offer.get("id")
+            if offer_id is None:
+                continue
+            try:
+                products = await self.get_personal_offer_products(
+                    str(offer_id),
+                    lang=lang,
+                    expected_count=_positive_int(offer.get("productRangeSize")),
+                )
+            except DelhaizeApiError as err:
+                offer["productsError"] = str(err)
+                _LOGGER.debug(
+                    "Could not fetch Delhaize personal offer products %s: %s",
+                    offer_id,
+                    err,
+                )
+                continue
+            if products:
+                offer["products"] = _merge_products(offer.get("products"), products)
 
     async def get_coupon_book_offers(
         self,
@@ -1704,6 +1817,67 @@ def summarize_graphql_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any
         summary.append({key: value for key, value in item.items() if value is not None})
 
     return summary
+
+
+def _personal_offer_needs_products(offer: dict[str, Any]) -> bool:
+    """Return whether an offer needs the product-list request used by its detail page."""
+    if (
+        offer.get("basketPromo") is True
+        or offer.get("offerRedeemed") is True
+        or _positive_int(offer.get("points")) is None
+    ):
+        return False
+    products = offer.get("products")
+    if not isinstance(products, list) or not products:
+        return True
+    expected_count = _positive_int(offer.get("productRangeSize"))
+    if offer.get("hasMoreProducts") is True or (
+        expected_count is not None and len(products) < expected_count
+    ):
+        return True
+    return any(
+        not isinstance(product, dict) or not _product_has_price(product)
+        for product in products
+    )
+
+
+def _product_has_price(product: dict[str, Any]) -> bool:
+    """Return whether a product contains a usable price for percentage calculation."""
+    price = product.get("price")
+    if not isinstance(price, dict):
+        return False
+    return any(price.get(key) not in (None, "") for key in ("wasPrice", "value"))
+
+
+def _positive_int(value: Any) -> int | None:
+    """Return a positive integer without accepting booleans."""
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _merge_products(existing: Any, fetched: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge fetched product details by code, preferring their current values."""
+    merged = [product for product in existing or [] if isinstance(product, dict)]
+    indexes = {
+        str(product["code"]): index
+        for index, product in enumerate(merged)
+        if product.get("code") is not None
+    }
+    for product in fetched:
+        code = product.get("code")
+        index = indexes.get(str(code)) if code is not None else None
+        if index is None:
+            merged.append(product)
+            if code is not None:
+                indexes[str(code)] = len(merged) - 1
+        else:
+            merged[index] = {**merged[index], **product}
+    return merged
 
 
 def _find_value(value: Any, key: str) -> Any:

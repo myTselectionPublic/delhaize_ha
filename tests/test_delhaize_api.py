@@ -425,6 +425,64 @@ def test_graphql_treats_invalid_access_token_without_refresh_cookie_as_auth_lost
     asyncio.run(run_test())
 
 
+def test_validate_session_refreshes_when_access_cookie_is_missing() -> None:
+    """A remembered customer session without its access cookie can be refreshed."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse(
+                    {
+                        "errors": [
+                            {
+                                "message": (
+                                    "Customer was authenticated previously, but "
+                                    "customer token not sent"
+                                ),
+                                "path": ["currentCustomer"],
+                                "extensions": {"code": "UNAUTHENTICATED"},
+                            }
+                        ]
+                    }
+                ),
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"grocery-roatc": "new-access-token"},
+                ),
+                FakeResponse(
+                    {
+                        "data": {
+                            "currentCustomer": {
+                                "uid": "customer-1",
+                                "firstName": "Del",
+                            }
+                        }
+                    }
+                ),
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header=(
+                "deviceSessionId=device-1; grocery-rortc=refresh-token; "
+                "grocery-wasc=remembered-session"
+            ),
+        )
+
+        customer = await api.validate_session()
+
+        assert customer["uid"] == "customer-1"
+        assert [request["operation"] for request in session.requests] == [
+            "CurrentCustomer",
+            "RefreshCustomerToken",
+            "CurrentCustomer",
+        ]
+        assert_refresh_customer_token_request(session.requests[1])
+        assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
+
+    asyncio.run(run_test())
+
+
 def test_validate_session_refreshes_unauthenticated_invalid_access_token() -> None:
     """Delhaize may report an expired access cookie as UNAUTHENTICATED."""
 

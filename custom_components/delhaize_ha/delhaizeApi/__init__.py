@@ -1214,7 +1214,10 @@ class DelhaizeApi:
 
         if (
             operation_name.lower() not in {"login", "loginwithmfa"}
-            and _is_invalid_access_token_error(text)
+            and (
+                _is_invalid_access_token_error(text)
+                or _is_missing_access_token_error(text)
+            )
         ):
             raise DelhaizeTokenRefreshRequired(combined, errors=errors)
 
@@ -1345,6 +1348,14 @@ def _is_token_expired_error(text: str) -> bool:
 def _is_invalid_access_token_error(text: str) -> bool:
     """Return whether GraphQL error text describes a rejected access token."""
     return "invalid access token" in text
+
+
+def _is_missing_access_token_error(text: str) -> bool:
+    """Return whether a previous session is missing its customer access token."""
+    return (
+        "customer was authenticated previously" in text
+        and "customer token not sent" in text
+    )
 
 
 def _customer_auth_cookies(cookies: dict[str, str]) -> dict[str, str]:

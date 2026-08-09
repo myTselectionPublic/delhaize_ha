@@ -120,9 +120,9 @@ content: |
   {% if personal_products %}
   **Personal promotion value**
 
-  | Product | Offer | Points value | Original | Discount | Status |
-  |---|---|---:|---:|---:|---:|
-  {% for product in personal_products %}| {{ product.get('product', '-') | replace('|',' ') }} | {{ product.get('offer', '-') | replace('|',' ') }} | €{{ product.get('points_value', '-') }} / {{ product.get('points', '-') }} pts | {{ product.get('original_price', '-') }} | {{ product.get('discount_percentage_formatted', '-') }} | {{ 'Active' if product.get('active') else 'Available' }} |
+  | Product | Offer | Points value | Qty | Unit price | Qualifying total | Discount | Status |
+  |---|---|---:|---:|---:|---:|---:|---:|
+  {% for product in personal_products %}{% set quantity = product.get('required_quantity', 1) | int(1) %}{% set unit_price = product.get('original_price_value') %}{% set qualifying_total = product.get('qualifying_price_value') %}{% if qualifying_total is none and unit_price is not none %}{% set qualifying_total = (unit_price | float * quantity) | round(2) %}{% endif %}{% set points_value = product.get('points_value') %}{% if points_value is not none and qualifying_total not in [none, 0] %}{% set effective_discount = ((points_value | float / qualifying_total | float) * 100) | round(1) %}{% else %}{% set effective_discount = none %}{% endif %}| {{ product.get('product', '-') | replace('|',' ') }} | {{ product.get('offer', '-') | replace('|',' ') }} | €{{ points_value if points_value is not none else '-' }} / {{ product.get('points', '-') }} pts | {{ quantity }} | {{ product.get('original_price', '-') }} | {{ '€' ~ qualifying_total if qualifying_total is not none else '-' }} | {{ ('%g' | format(effective_discount)) ~ '%' if effective_discount is not none else '-' }} | {{ 'Active' if product.get('active') else 'Available' }} |
   {% endfor %}
   {% endif %}
 

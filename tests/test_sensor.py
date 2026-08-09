@@ -191,10 +191,10 @@ def test_personal_offer_percentage_uses_required_item_quantity() -> None:
 
 
 def test_personal_offer_quantity_can_span_name_and_promotion() -> None:
-    """The points and quantity text may be split across offer fields."""
+    """The points and quantity text may be split and reversed across fields."""
     offer = {
-        "name": "150 punten",
-        "promotion": "voor 3 producten",
+        "name": "Bij aankoop van minstens 3 producten",
+        "promotion": "150 punten",
         "points": 150,
         "products": [{"price": {"value": 2}}],
     }

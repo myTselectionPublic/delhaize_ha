@@ -363,23 +363,35 @@ def _personal_offer_product_discount_list_for_offer(
 
 def _personal_offer_required_quantity(offer: dict[str, Any]) -> int:
     """Return the item count required by labels such as '100 punten voor 2'."""
-    label = " ".join(
+    labels = [
         value
         for value in (
             _clean_label(offer.get("name")),
             _clean_label(offer.get("promotion")),
+            _clean_label(offer.get("promotionId")),
         )
         if value
+    ]
+    # Delhaize may split the reward and condition between name and promotion,
+    # and their order differs between API responses and languages.
+    label = " ".join(labels + list(reversed(labels)))
+    quantity_condition = (
+        r"(?:voor|pour|vanaf|d[eè]s|bij\s+(?:de\s+)?aankoop\s+van|"
+        r"(?:a|à)\s+l['’]achat\s+de)\s+"
+        r"(?:(?:minstens|minimum|au\s+moins)\s+)?(\d+)\b"
     )
-    match = re.search(
-        r"\b(?:punten|points?)\s+(?:voor|pour)\s+(\d+)\b",
-        label,
-        flags=re.IGNORECASE,
+    patterns = (
+        rf"\b(?:punten|points?)\b.{{0,80}}?{quantity_condition}",
+        rf"{quantity_condition}.{{0,80}}?\b(?:punten|points?)\b",
     )
-    if match is None:
-        return 1
-    quantity = _int_or_none(match.group(1))
-    return quantity if quantity is not None and quantity > 1 else 1
+    for pattern in patterns:
+        match = re.search(pattern, label, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        quantity = _int_or_none(match.group(1))
+        if quantity is not None and quantity > 1:
+            return quantity
+    return 1
 
 
 def _coupon_book_flash_offer_attributes(data: dict[str, Any]) -> dict[str, Any]:

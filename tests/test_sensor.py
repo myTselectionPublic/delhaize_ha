@@ -204,3 +204,21 @@ def test_personal_offer_quantity_can_span_name_and_promotion() -> None:
     assert product["required_quantity"] == 3
     assert product["qualifying_price_value"] == 6.0
     assert product["discount_percentage"] == 25.0
+
+
+def test_product_row_exposes_quantity_from_separate_promotion_text() -> None:
+    """Product rows should retain a multi-buy promotion stored outside its name."""
+    offer = {
+        "name": "Personal offer 115",
+        "promotion": "115 punten voor 2",
+        "points": 115,
+        "products": [{"name": "Product", "price": {"value": 4}}],
+    }
+
+    product = sensor._personal_offer_product_discount_list_for_offer(offer)[0]
+
+    assert product["offer"] == "Personal offer 115"
+    assert product["promotion"] == "115 punten voor 2"
+    assert product["required_quantity"] == 2
+    assert product["qualifying_price_value"] == 8.0
+    assert product["discount_percentage"] == 14.4

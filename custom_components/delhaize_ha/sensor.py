@@ -337,6 +337,7 @@ def _personal_offer_product_discount_list_for_offer(
             _without_none(
                 {
                     "offer": offer_label,
+                    "promotion": _clean_label(offer.get("promotion")),
                     "active": offer.get("active"),
                     "product": _clean_label(product.get("name")),
                     "product_code": _clean_label(product.get("code")),

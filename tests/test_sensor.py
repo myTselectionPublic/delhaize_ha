@@ -222,3 +222,35 @@ def test_product_row_exposes_quantity_from_separate_promotion_text() -> None:
     assert product["required_quantity"] == 2
     assert product["qualifying_price_value"] == 8.0
     assert product["discount_percentage"] == 14.4
+
+
+def test_quantity_parser_normalizes_cms_markup_and_spacing() -> None:
+    """Rendered promotion text may contain HTML and non-breaking spaces."""
+    offer = {
+        "name": "Personal offer 115",
+        "promotion": "<strong>115 punten</strong><br>voor&nbsp;2",
+        "points": 115,
+        "products": [{"price": {"value": 4}}],
+    }
+
+    product = sensor._personal_offer_product_discount_list_for_offer(offer)[0]
+
+    assert product["required_quantity"] == 2
+    assert product["qualifying_price_value"] == 8.0
+    assert product["discount_percentage"] == 14.4
+
+
+def test_quantity_parser_normalizes_api_underscore_separator() -> None:
+    """PersonalOffersV2 separates promotion words with underscores."""
+    offer = {
+        "name": "Delhaize rauwe of gerookte ham",
+        "promotion": "115 punten_voor 2",
+        "points": 115,
+        "products": [{"price": {"value": 2.05}}],
+    }
+
+    product = sensor._personal_offer_product_discount_list_for_offer(offer)[0]
+
+    assert product["required_quantity"] == 2
+    assert product["qualifying_price_value"] == 4.1
+    assert product["discount_percentage"] == 28.0

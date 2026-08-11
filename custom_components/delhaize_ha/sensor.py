@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from html import unescape
 import re
 from typing import Any
 
@@ -375,7 +376,9 @@ def _personal_offer_required_quantity(offer: dict[str, Any]) -> int:
     ]
     # Delhaize may split the reward and condition between name and promotion,
     # and their order differs between API responses and languages.
-    label = " ".join(labels + list(reversed(labels)))
+    label = " ".join(labels + list(reversed(labels))).replace("_", " ")
+    label = re.sub(r"<[^>]*>", " ", unescape(label))
+    label = re.sub(r"\s+", " ", label).strip()
     quantity_condition = (
         r"(?:voor|pour|vanaf|d[eè]s|bij\s+(?:de\s+)?aankoop\s+van|"
         r"(?:a|à)\s+l['’]achat\s+de)\s+"

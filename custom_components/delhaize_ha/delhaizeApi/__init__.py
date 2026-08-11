@@ -658,12 +658,12 @@ class DelhaizeApi:
         before_cookie_names = sorted(before_cookies)
         before_auth_cookies = _customer_auth_cookies(before_cookies)
         old_access_cookies = {
-            name: self._cookies.pop(name)
+            name: self._cookies[name]
             for name in CUSTOMER_ACCESS_COOKIE_NAMES
             if name in self._cookies
         }
         _LOGGER.debug(
-            "Refreshing Delhaize customer auth cookies: device_session_present=%s expired_access_cookies_removed=%s cookie_names_before=%s",
+            "Refreshing Delhaize customer auth cookies: device_session_present=%s access_cookie_names=%s cookie_names_before=%s",
             DEVICE_SESSION_COOKIE_NAME in self._cookies,
             sorted(old_access_cookies),
             before_cookie_names,

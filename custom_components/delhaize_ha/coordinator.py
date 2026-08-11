@@ -60,7 +60,10 @@ class DelhaizeDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (DelhaizeCaptchaRequired, DelhaizeMfaRequired) as exc:
             raise ConfigEntryAuthFailed(str(exc)) from exc
         except DelhaizeAuthError as exc:
-            if not self._has_credentials:
+            # Delhaize's credential endpoint now requires a browser captcha.
+            # A configured browser-cookie session must therefore be renewed by
+            # reauthentication instead of attempting login with captcha=None.
+            if self.config_entry.data.get(CONF_COOKIE) or not self._has_credentials:
                 raise ConfigEntryAuthFailed(str(exc)) from exc
             try:
                 await self._login_with_stored_credentials()

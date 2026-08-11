@@ -320,7 +320,7 @@ def test_validate_session_refreshes_pending_token_and_retries() -> None:
         assert_refresh_customer_token_request(session.requests[1])
         assert (
             "grocery-roatc=old-access-token"
-            in session.requests[1]["headers"]["Cookie"]
+            not in session.requests[1]["headers"]["Cookie"]
         )
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
 
@@ -1037,6 +1037,7 @@ def assert_refresh_customer_token_request(request: dict[str, Any]) -> None:
     assert request["headers"]["Apollographql-Client-Name"] == APOLLO_CLIENT_NAME
     assert request["headers"]["Apollographql-Client-Version"] == APOLLO_CLIENT_VERSION
     assert request["headers"]["x-default-gql-refresh-token-disabled"] == "true"
+    assert "grocery-roatc=" not in request["headers"]["Cookie"]
     assert "grocery-rortc=refresh-token" in request["headers"]["Cookie"]
     assert request["headers"]["Referer"] == "https://www.delhaize.be/"
     assert request["headers"]["Sec-CH-UA-Platform"] == '"Windows"'

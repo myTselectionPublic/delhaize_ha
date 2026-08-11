@@ -122,7 +122,7 @@ content: |
 
   | Product | Offer | Points value | Qty | Unit price | Qualifying total | Discount | Status |
   |---|---|---:|---:|---:|---:|---:|---:|
-  {% for product in personal_products %}{% set matched = namespace(promotion=product.get('promotion', '')) %}{% if not matched.promotion %}{% for deal in personal %}{% if deal.get('description') == product.get('offer') %}{% set matched.promotion = deal.get('promotion', '') %}{% endif %}{% endfor %}{% endif %}{% if not matched.promotion %}{% for deal in personal %}{% if deal.get('points') == product.get('points') %}{% set matched.promotion = deal.get('promotion', '') %}{% endif %}{% endfor %}{% endif %}{% set offer_text = (product.get('offer', '') ~ ' ' ~ matched.promotion) | replace('_', ' ') | replace('&nbsp;', ' ') | regex_replace('<[^>]*>', ' ') | regex_replace('\\s+', ' ') %}{% set quantity_matches = offer_text | regex_findall('(?:punten|points?)\\s*(?:voor|pour|for)\\s*(\\d+)', ignorecase=true) %}{% set quantity = product.get('required_quantity', 1) | int(1) %}{% if quantity <= 1 and quantity_matches | length > 0 %}{% set quantity = quantity_matches | first | int(1) %}{% endif %}{% set unit_price = product.get('original_price_value') %}{% set qualifying_total = (unit_price | float * quantity) | round(2) if unit_price is not none else none %}{% set points_value = product.get('points_value') %}{% if points_value is not none and qualifying_total not in [none, 0] %}{% set effective_discount = ((points_value | float / qualifying_total | float) * 100) | round(1) %}{% else %}{% set effective_discount = none %}{% endif %}| {{ product.get('product', '-') | replace('|',' ') }} | {{ product.get('offer', '-') | replace('|',' ') }}{% if matched.promotion and matched.promotion != product.get('offer') %} ({{ matched.promotion | replace('|',' ') }}){% endif %} | €{{ points_value if points_value is not none else '-' }} / {{ product.get('points', '-') }} pts | {{ quantity }} | {{ product.get('original_price', '-') }} | {{ '€' ~ qualifying_total if qualifying_total is not none else '-' }} | {{ ('%g' | format(effective_discount)) ~ '%' if effective_discount is not none else '-' }} | {{ 'Active' if product.get('active') else 'Available' }} |
+  {% for product in personal_products %}| {{ product.get('product', '-') | replace('|',' ') }} | {{ product.get('offer', '-') | replace('|',' ') }}{% if product.get('promotion') and product.get('promotion') != product.get('offer') %} ({{ product.get('promotion') | replace('_',' ') | replace('|',' ') }}){% endif %} | €{{ product.get('points_value', '-') }} / {{ product.get('points', '-') }} pts | {{ product.get('required_quantity', 1) }} | {{ product.get('original_price', '-') }} | {{ '€' ~ product.get('qualifying_price_value') if product.get('qualifying_price_value') is not none else '-' }} | {{ product.get('discount_percentage_formatted', '-') }} | {{ 'Active' if product.get('active') else 'Available' }} |
   {% endfor %}
   {% endif %}
 
@@ -163,7 +163,146 @@ content: |
   {% endfor %}
 ```
 
-The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For personal promotions, `personal_offer_product_discount_list` exposes every returned product, its original price, the euro value of the awarded points, and `discount_percentage`. When the personal-offer response omits a product price or part of the product range, the integration also fetches the product listing used by Delhaize's offer detail page. The percentage is normally calculated as `(points × €0.01) / original price × 100`. For multi-buy labels such as `100 punten voor 2`, the price is first multiplied by the required quantity; the product row then also exposes `required_quantity` and `qualifying_price_value`. For burnable offers, `point_price_value` assumes 1 point = €0.01 and the discount is calculated from the points purchase price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
+**Compact version:**
+
+```yaml
+type: markdown
+title: Delhaize promotions
+content: >
+  {% set ns = namespace(offer_sensors=[]) %}
+
+  {% for sensor in states.sensor %}
+    {% if sensor.entity_id.startswith('sensor.delhaize_') and sensor.entity_id.endswith('_personal_offers_available') %}
+      {% set ns.offer_sensors = ns.offer_sensors + [sensor.entity_id] %}
+    {% endif %}
+  {% endfor %}
+
+
+  {% if not ns.offer_sensors %}
+
+  No Delhaize offer sensors found.
+
+  {% endif %}
+
+
+  {% for available_entity in ns.offer_sensors %}
+
+  {% set activated_entity = available_entity
+    | replace('_personal_offers_available', '_personal_offers_activated') %}
+  {% set burnable_entity = available_entity
+    | replace('_personal_offers_available', '_burnable_offer_discounts') %}
+  {% set account = (state_attr(available_entity, 'friendly_name') or
+  available_entity)
+    | replace(' Personal offers available', '') %}
+  {% set personal = state_attr(activated_entity, 'description_list') or [] %}
+
+  {% set personal_products = state_attr(available_entity,
+  'personal_offer_product_discount_list') or [] %}
+
+  {% set flash = state_attr(available_entity, 'flash_offer_list') or [] %}
+
+  {% set coupon_personal = state_attr(available_entity,
+  'coupon_book_personal_offer_list') or [] %}
+
+  {% set burnable = state_attr(burnable_entity, 'product_discount_list') or []
+  %}
+
+
+  ## {{ account }}
+
+
+
+  **Flash e-Deals**  
+
+  <details><summary>Available: {{ state_attr(available_entity,
+  'flash_available') or 0 }} / {{ state_attr(available_entity, 'flash_total') or
+  0 }}</summary>
+
+
+  {% if flash %}
+
+  | Promotion | Details | Type | Status | Points | Until |
+
+  |---|---|---:|---:|---:|---:|
+
+  {% for offer in flash %}| {{ offer.get('description', '-')| replace('|',' ') 
+  }} | {{ offer.get('promotion', '-') }} | {{ offer.get('promotion_type', '-')
+  }} | {{ 'Active' if offer.get('active') else 'Available' }} | {{
+  offer.get('points', '-') }} | {{ offer.get('available_until', '-') }} |
+
+  {% endfor %}
+
+  {% endif %}
+
+  </details>
+
+
+  **Personal e-Deals**  
+
+  <details><summary>Activated: {{ states(activated_entity) }}</summary>
+
+
+
+  {% if personal_products %}
+
+  **Personal promotion value**
+
+
+  | Product | Offer | Points value | Qty | Unit price | Qualifying total |
+  Discount | 
+
+  |---|---|---:|---:|---:|---:|---:|
+
+  {% for product in personal_products %}| {{ product.get('product', '-') |
+  replace('|',' ') }} | {{ product.get('offer', '-') | replace('|',' ') }}{% if
+  product.get('promotion') and product.get('promotion') != product.get('offer')
+  %} ({{ product.get('promotion') | replace('_',' ') | replace('|',' ') }}){%
+  endif %} | €{{ product.get('points_value', '-') }} | {{
+  product.get('required_quantity', 1) }} | {{ product.get('original_price', '-')
+  }} | {{ '€' ~ product.get('qualifying_price_value') if
+  product.get('qualifying_price_value') is not none else '-' }} | {{
+  product.get('discount_percentage_formatted', '-') }} |
+
+  {% endfor %}
+
+  {% endif %}
+
+  </details>
+
+
+  **Burnable product discounts**
+
+  <details><summary>Products: {{ states(burnable_entity) }}</summary>
+
+
+  {% if burnable %}
+
+  | Product | Offer | Point price | Original | Discount | Remaining |
+
+  |---|---|---:|---:|---:|---:|
+
+  {% for product in burnable %}| {{ product.get('product', '-') | replace('|','
+  ') }} | {{ product.get('offer', '-') | replace('|',' ') }} | €{{
+  product.get('point_price_value', '-') }}| {{ product.get('original_price',
+  '-') }} | {{ product.get('discount_percentage_formatted', '-') }} | {{
+  product.get('days_remaining', '-') }} days |
+
+  {% endfor %}
+
+  {% else %}
+
+  No burnable product discounts found.
+
+  {% endif %}
+
+  </details>
+
+
+  {% endfor %}
+
+```
+
+The `promotion`, `promotion_type`, dates, prices, and point values come from Delhaize. For personal promotions, `personal_offer_product_discount_list` exposes every returned product, its original price, the euro value of the awarded points, and `discount_percentage`. When the personal-offer response omits a product price or part of the product range, the integration also fetches the product listing used by Delhaize's offer detail page. Every product row exposes the sensor-calculated `required_quantity` and `qualifying_price_value`; ordinary offers use quantity `1`. For multi-buy labels such as `100 punten_voor 2`, underscores and other formatting are normalized, and the price is multiplied by the required quantity before calculating the percentage. The Markdown example only displays these sensor-calculated values. For burnable offers, `point_price_value` assumes 1 point = €0.01 and the discount is calculated from the points purchase price. Original product price uses `price.wasPrice` when available and otherwise falls back to the normal product price.
 
 ## Services
 

@@ -344,12 +344,8 @@ def _personal_offer_product_discount_list_for_offer(
                     "product_code": _clean_label(product.get("code")),
                     "points": points,
                     "points_value": points_value,
-                    "required_quantity": (
-                        required_quantity if required_quantity > 1 else None
-                    ),
-                    "qualifying_price_value": (
-                        qualifying_price_value if required_quantity > 1 else None
-                    ),
+                    "required_quantity": required_quantity,
+                    "qualifying_price_value": qualifying_price_value,
                     "original_price": _clean_label(price.get("wasPrice"))
                     or _clean_label(price.get("formattedValue")),
                     "original_price_value": original_price_value,

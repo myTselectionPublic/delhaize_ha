@@ -372,6 +372,38 @@ def test_graphql_refreshes_access_token_expired_and_retries_operation() -> None:
     asyncio.run(run_test())
 
 
+def test_refresh_removes_stale_access_token_but_preserves_customer_cookie() -> None:
+    """Match the browser refresh: omit grocery-roatc while retaining v_cust."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [
+                FakeResponse(
+                    {"data": {"refreshCustomerAuthCookies": None}},
+                    cookies={"grocery-roatc": "new-access-token"},
+                )
+            ]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header=(
+                "v_cust=customer-session; grocery-roatc=old-access-token; "
+                "grocery-rortc=refresh-token"
+            ),
+        )
+
+        refreshed = await api.refresh_customer_auth_cookies()
+
+        assert refreshed
+        refresh_cookie = session.requests[0]["headers"]["Cookie"]
+        assert "grocery-roatc=" not in refresh_cookie
+        assert "v_cust=customer-session" in refresh_cookie
+        assert "grocery-rortc=refresh-token" in refresh_cookie
+        assert "v_cust=customer-session" in api.get_cookie_header()
+
+    asyncio.run(run_test())
+
+
 def test_refresh_stores_auth_cookie_from_raw_set_cookie_header() -> None:
     """Some Set-Cookie headers may not be exposed through response.cookies."""
 

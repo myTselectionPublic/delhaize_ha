@@ -151,7 +151,6 @@ OPERATION_IDS = {
 }
 CUSTOMER_ACCESS_COOKIE_NAMES = {
     "grocery-roatc",
-    "v_cust",
 }
 
 LOGIN_EXTENSIONS = {

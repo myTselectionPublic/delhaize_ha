@@ -30,7 +30,6 @@ CUSTOMER_AUTH_COOKIE_NAMES = {
 }
 CUSTOMER_REFRESH_COOKIE_NAMES = {
     "grocery-rortc",
-    "grocery-wasc",
 }
 
 LOGIN_MUTATION = """
@@ -1534,6 +1533,13 @@ def _response_cookie_items(response: ClientResponse) -> dict[str, str]:
             if value:
                 cookies[key] = value
                 nonempty_response_cookies.add(key)
+            elif key in CUSTOMER_AUTH_COOKIE_NAMES and _set_cookie_has_domain(header):
+                # Delhaize clears obsolete wider-domain auth cookies after a
+                # successful refresh while retaining same-named host-only
+                # cookies. Our imported Cookie header has no domain metadata,
+                # so applying this scoped deletion would discard the usable
+                # host-only refresh cookie.
+                continue
             elif key not in nonempty_response_cookies:
                 cookies[key] = ""
 
@@ -1559,6 +1565,14 @@ def _cookies_from_set_cookie_header(header: str) -> dict[str, str]:
     if not key:
         return {}
     return {key: value.strip()}
+
+
+def _set_cookie_has_domain(header: str) -> bool:
+    """Return whether a Set-Cookie header targets an explicit domain scope."""
+    return any(
+        part.strip().lower().startswith("domain=")
+        for part in header.split(";")[1:]
+    )
 
 
 def _cookie_header_pairs(header: str) -> list[tuple[str, str]]:

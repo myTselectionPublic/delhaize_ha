@@ -505,7 +505,35 @@ def test_refresh_keeps_auth_cookie_when_later_set_cookie_deletes_domain_cookie()
 
         assert details["loyaltyPoints"]["pointsBalance"] == 42
         assert "grocery-roatc=new-access-token" in api.get_cookie_header()
+        assert "grocery-rortc=refresh-token" in api.get_cookie_header()
+        assert "grocery-wasc=old-wasc" in api.get_cookie_header()
         assert "grocery-roatc=new-access-token" in session.requests[2]["headers"]["Cookie"]
+
+    asyncio.run(run_test())
+
+
+def test_wasc_without_refresh_token_does_not_attempt_refresh() -> None:
+    """grocery-wasc alone cannot refresh the customer access token."""
+
+    async def run_test() -> None:
+        session = FakeSession(
+            [FakeResponse({"errors": [{"message": "Access token expired"}]})]
+        )
+        api = DelhaizeApi(
+            session,
+            cookie_header="deviceSessionId=device-1; grocery-wasc=web-auth-session",
+        )
+
+        try:
+            await api.validate_session()
+        except DelhaizeTokenRefreshRequired:
+            pass
+        else:
+            raise AssertionError("Expected missing refresh credential to require reauth")
+
+        assert [request["operation"] for request in session.requests] == [
+            "CurrentCustomer"
+        ]
 
     asyncio.run(run_test())
 

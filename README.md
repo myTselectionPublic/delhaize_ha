@@ -1,6 +1,6 @@
 [![HACS Default](https://img.shields.io/badge/HACS-Default-blue.svg)](https://github.com/hacs/default)
-[![GitHub release](https://img.shields.io/github/release/myTselection/delhaize_ha.svg)](https://github.com/myTselection/delhaize_ha/releases)
-![GitHub repo size](https://img.shields.io/github/repo-size/myTselection/delhaize_ha.svg)
+[![GitHub release](https://img.shields.io/github/release/myTselectionPublic/delhaize_ha.svg)](https://github.com/myTselectionPublic/delhaize_ha/releases)
+![GitHub repo size](https://img.shields.io/github/repo-size/myTselectionPublic/delhaize_ha.svg)
 
 # Delhaize Home Assistant integration
 
@@ -14,17 +14,17 @@ This integration talks to the same Delhaize GraphQL endpoint used by the website
 | -------------------------------------------------------------------------------------------------------------------- |
 
 
-<p align="center"><img src="https://raw.githubusercontent.com/myTselection/delhaize_ha/master/logo.png"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/myTselectionPublic/delhaize_ha/master/logo.png"/></p>
 
 
 
 ## Installation
 
 - [HACS](https://hacs.xyz/): search for delhaize_ha in the default HACS repo list or use below button to navigate directly to it on your local system and install via HACS. 
-   -    [![Open your Home Assistant instance and open the repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg?style=flat-square)](https://my.home-assistant.io/redirect/hacs_repository/?owner=myTselection&repository=delhaize_ha&category=integration)
+   -    [![Open your Home Assistant instance and open the repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg?style=flat-square)](https://my.home-assistant.io/redirect/hacs_repository/?owner=myTselectionPublic&repository=delhaize_ha&category=integration)
 - Restart Home Assistant.
 - Add the `Delhaize` integration from Settings > Devices and services.
-- <img src="https://raw.githubusercontent.com/myTselection/delhaize_ha/master/setup.png"/>
+- <img src="https://raw.githubusercontent.com/myTselectionPublic/delhaize_ha/master/setup.png"/>
 - Enter your Delhaize username/email and password. When Delhaize accepts the
   credential request, the integration continues with the temporary email code
   and stores the resulting refreshable session automatically.
@@ -36,7 +36,7 @@ This integration talks to the same Delhaize GraphQL endpoint used by the website
    - Navigate to the user profile on the Delhaize site
    - In the DevTool Network Tab, select a connection loaded from "https://www.delhaize.be/api/v1/..." and search for the "Request Headers" > "Cookie".
    - Copy and paste the full "Cookie" value into the Home Assistant "cookie" field. This will allow Home Assistant to re-use the authenticated browser session.
-   - <img src="https://raw.githubusercontent.com/myTselection/delhaize_ha/master/cookiefrombrowser.png"/>
+   - <img src="https://raw.githubusercontent.com/myTselectionPublic/delhaize_ha/master/cookiefrombrowser.png"/>
 - When the option "Automatically activate personal offers" is enabled and personal offers are detected which haven't been activated yet, these will automatically be activated.
    - This will make sure all personal offers are immediately available to you    
 - The configuration options can still be changed after setup has been completed
@@ -69,7 +69,7 @@ The integration creates sensors for:
 - Loyalty card number
 - Account
 
-<p align="center"><img src="https://raw.githubusercontent.com/myTselection/delhaize_ha/master/sensors.png"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/myTselectionPublic/delhaize_ha/master/sensors.png"/></p>
 
 ## Dashboard example
 

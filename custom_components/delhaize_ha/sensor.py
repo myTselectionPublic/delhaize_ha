@@ -502,7 +502,9 @@ def _burnable_offer_discount_product_list(
             original_price_value = _price_amount(price.get("wasPrice"))
             if original_price_value is None:
                 original_price_value = _price_amount(price.get("value"))
-            discount_percentage = _percentage(point_price_value, original_price_value)
+            discount_percentage = _value_percentage(
+                point_price_value, original_price_value
+            )
             products.append(
                 _without_none(
                     {

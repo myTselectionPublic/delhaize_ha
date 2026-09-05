@@ -258,3 +258,43 @@ def test_quantity_parser_normalizes_api_underscore_separator() -> None:
     assert product["required_quantity"] == 2
     assert product["qualifying_price_value"] == 4.1
     assert product["discount_percentage"] == 28.0
+
+
+
+def test_burnable_offer_uses_points_as_discount_value() -> None:
+    """Redeemed points are the saving, rather than the remaining product price."""
+    data = {
+        "burnable_offers": {
+            "burnableOfferList": [
+                {
+                    "id": "chipito-offer",
+                    "name": "Cheetos Chipito chips met kaassmaak 125g",
+                    "priceToBurn": 125,
+                    "daysRemaining": 14,
+                    "products": [
+                        {
+                            "name": "Chips Chipito Fromage",
+                            "price": {
+                                "formattedValue": "€ 1,79",
+                                "value": 1.79,
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+    assert sensor._burnable_offer_discount_product_list(data) == [
+        {
+            "offer": "Cheetos Chipito chips met kaassmaak 125g",
+            "discount_points": 125,
+            "point_price_value": 1.25,
+            "original_price_value": 1.79,
+            "discount_percentage": 69.8,
+            "discount_percentage_formatted": "69.8%",
+            "days_remaining": 14,
+            "product": "Chips Chipito Fromage",
+            "original_price": "€ 1,79",
+        }
+    ]

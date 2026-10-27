@@ -11,11 +11,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_COOKIE, CONF_LANGUAGE, DEFAULT_LANGUAGE, DOMAIN
 from .coordinator import DelhaizeDataUpdateCoordinator
 from .delhaizeApi import DelhaizeApi, DelhaizeApiError
+from .session import async_create_websession
 
 _LOGGER = logging.getLogger(DOMAIN)
 
@@ -41,7 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     api = DelhaizeApi(
-        async_get_clientsession(hass),
+        async_create_websession(hass),
         cookie_header=entry.data.get(CONF_COOKIE),
         language=entry.data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE),
     )

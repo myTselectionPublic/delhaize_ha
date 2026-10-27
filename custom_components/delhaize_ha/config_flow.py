@@ -11,7 +11,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
     SelectSelector,
@@ -38,6 +37,7 @@ from .delhaizeApi import (
     DelhaizeRequestError,
     summarize_graphql_errors,
 )
+from .session import async_create_websession
 
 LANGUAGE_OPTIONS = ["nl", "fr", "en"]
 
@@ -714,7 +714,7 @@ async def _try_send_mfa_code(
 def _api_for_data(hass: HomeAssistant, data: dict[str, Any]) -> DelhaizeApi:
     """Create an API client for flow validation."""
     return DelhaizeApi(
-        async_get_clientsession(hass),
+        async_create_websession(hass),
         cookie_header=data.get(CONF_COOKIE),
         language=data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE),
     )
